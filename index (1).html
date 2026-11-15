@@ -1,0 +1,2415 @@
+<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Photo vers STL</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Plan : atelier d'impression 3D. Deux colonnes sur grand écran (préparation à gauche, pièce à droite), une colonne sur téléphone. */
+:root {
+  --bg: #f2f4f1; --surface: #ffffff; --surface-2: #e9ecea; --fg: #1b2026; --muted: #5d6771; --line: #d3d9d4;
+  --accent: #0e7c86; --accent-fg: #ffffff; --accent-soft: rgba(14,124,134,0.14);
+  --ok: #2e7d4f; --warn: #b4610a; --bad: #b3261e;
+  --viewer-bg: #e3e7e4; --mesh: #d99a3b; --grid: #b9c1bb;
+  --font-text: "IBM Plex Sans", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #14171b; --surface: #1d2126; --surface-2: #262b31; --fg: #e7eaed; --muted: #9ba4ad; --line: #30373e;
+  --accent: #3fc3cc; --accent-fg: #0b1517; --accent-soft: rgba(63,195,204,0.16);
+  --ok: #5fc389; --warn: #e4a04a; --bad: #f08c85;
+  --viewer-bg: #0f1215; --mesh: #e0a64a; --grid: #343b43; color-scheme: dark;
+} }
+:root[data-theme="dark"] {
+  --bg: #14171b; --surface: #1d2126; --surface-2: #262b31; --fg: #e7eaed; --muted: #9ba4ad; --line: #30373e;
+  --accent: #3fc3cc; --accent-fg: #0b1517; --accent-soft: rgba(63,195,204,0.16);
+  --ok: #5fc389; --warn: #e4a04a; --bad: #f08c85;
+  --viewer-bg: #0f1215; --mesh: #e0a64a; --grid: #343b43; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+.vh { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; clip: rect(0 0 0 0); }
+label.btn { position: relative; display: inline-flex; align-items: center; }
+label.btn:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+body { background: var(--bg); color: var(--fg); font-family: var(--font-text); font-size: 15px; line-height: 1.5; margin: 0;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 0 48px; }
+.wrap { max-width: 1140px; margin: 0 auto; }
+header.top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; padding-block: 22px 14px; border-bottom: 1px solid var(--line); margin-bottom: 20px; }
+header.top h1 { font-size: 1.45rem; font-weight: 600; margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+header.top p { margin: 0; color: var(--muted); max-width: 60ch; }
+.layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px; }
+@media (min-width: 900px) { .layout { grid-template-columns: minmax(0, 7fr) minmax(0, 6fr); align-items: start; } .col-right { position: sticky; top: 12px; } }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; min-width: 0; }
+.panel + .panel { margin-top: 16px; }
+.panel h2 { font-size: 0.8rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 0 0 12px; display: flex; align-items: center; gap: 10px; }
+.panel h2 .n { font-family: var(--font-mono); font-size: 0.75rem; background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 1px 8px; }
+.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.btn { font: inherit; font-weight: 500; border: 1px solid var(--line); background: var(--surface-2); color: var(--fg); border-radius: 8px; padding: 9px 14px; cursor: pointer; min-height: 40px; }
+.btn:hover { border-color: var(--accent); }
+.btn:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 600; }
+.btn.primary:disabled, .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn.ghost { background: transparent; }
+.hint { color: var(--muted); font-size: 0.86rem; margin: 8px 0 0; }
+.thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; margin-top: 12px; }
+.thumb { position: relative; border-radius: 8px; overflow: hidden; background: var(--surface-2); border: 1px solid var(--line); display: flex; flex-direction: column; }
+.thumb .pic { position: relative; aspect-ratio: 1; }
+.thumb canvas { width: 100%; height: 100%; object-fit: cover; display: block; }
+.thumb .ang { display: flex; align-items: center; gap: 4px; padding: 4px 6px; font-family: var(--font-mono); font-size: 0.72rem; color: var(--muted); border-top: 1px solid var(--line); }
+.thumb .ang input { width: 100%; min-width: 0; font: inherit; padding: 2px 4px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); color: var(--fg); text-align: right; }
+.thumb .num { position: absolute; left: 6px; top: 6px; font-family: var(--font-mono); font-size: 0.72rem; background: rgba(0,0,0,0.6); color: #fff; padding: 1px 6px; border-radius: 4px; }
+.thumb .del { position: absolute; right: 4px; top: 4px; width: 26px; height: 26px; border-radius: 50%; border: 0; background: rgba(0,0,0,0.6); color: #fff; font-size: 16px; line-height: 1; cursor: pointer; }
+.thumb .flag { position: absolute; left: 0; right: 0; bottom: 0; z-index: 1; font-size: 0.68rem; padding: 2px 6px; background: var(--warn); color: #fff; }
+.thumb.bad .flag { background: var(--bad); }
+.empty { border: 1.5px dashed var(--line); border-radius: 8px; padding: 18px; text-align: center; color: var(--muted); margin-top: 12px; }
+.fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px 16px; }
+.field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.field label { font-size: 0.82rem; color: var(--muted); display: flex; justify-content: space-between; gap: 8px; }
+.field label output { font-family: var(--font-mono); color: var(--fg); }
+.field input[type=range] { width: 100%; accent-color: var(--accent); }
+.field select, .field input[type=number], .field input[type=text] { font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--fg); min-width: 0; width: 100%; }
+.check, .field label.check { display: flex; justify-content: flex-start; align-items: center; gap: 8px; font-size: 0.9rem; color: var(--fg); }
+.check input { accent-color: var(--accent); width: 18px; height: 18px; }
+.progress { height: 6px; background: var(--surface-2); border-radius: 999px; overflow: hidden; margin-top: 12px; }
+.progress > div { height: 100%; width: 0; background: var(--accent); transition: width 0.15s; }
+.status { font-size: 0.88rem; color: var(--muted); margin-top: 8px; min-height: 1.3em; }
+.status.err { color: var(--bad); }
+.viewer { position: relative; background: var(--viewer-bg); border-radius: 8px; overflow: hidden; aspect-ratio: 4 / 3; max-width: 100%; }
+.viewer canvas { width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+.viewer .overlay { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; color: var(--muted); padding: 20px; font-size: 0.92rem; pointer-events: none; }
+.viewer .badge { position: absolute; left: 10px; top: 10px; font-family: var(--font-mono); font-size: 0.72rem; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; color: var(--muted); }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-top: 12px; }
+.stat { background: var(--surface-2); border-radius: 8px; padding: 10px 12px; }
+.stat .k { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.stat .v { font-family: var(--font-mono); font-size: 1.02rem; font-variant-numeric: tabular-nums; }
+.warnings { margin: 12px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.warnings li { font-size: 0.86rem; padding: 8px 10px; border-radius: 8px; background: var(--accent-soft); border-left: 3px solid var(--warn); }
+.guide ol { padding-left: 20px; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.guide p { margin: 10px 0 0; }
+.guide .setup { display: block; max-width: 100%; margin: 4px auto 12px; }
+.small { font-size: 0.84rem; color: var(--muted); }
+.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(18px + env(safe-area-inset-bottom, 0px)); background: var(--fg); color: var(--bg); padding: 10px 16px; border-radius: 999px; font-size: 0.9rem; z-index: 20; box-shadow: 0 6px 20px rgba(0,0,0,0.25); }
+select.mini { font: inherit; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--fg); }
+.scan { position: fixed; inset: 0; z-index: 30; background: #000; color: #fff; }
+.scan video { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.scan #scan-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.scan-top { position: absolute; left: 0; right: 0; top: 0; padding: calc(14px + env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) 18px max(16px, env(safe-area-inset-left, 0px)); background: linear-gradient(rgba(0,0,0,0.7), rgba(0,0,0,0)); font-size: 1rem; font-weight: 500; text-align: center; text-wrap: balance; }
+.scan-bottom { position: absolute; left: 0; right: 0; bottom: 0; display: flex; flex-wrap: wrap; gap: 12px 18px; align-items: center; justify-content: center; padding: 14px max(16px, env(safe-area-inset-right, 0px)) calc(14px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); background: linear-gradient(rgba(0,0,0,0), rgba(0,0,0,0.75) 30%); }
+#scan-radar { width: 150px; height: 150px; }
+.scan-side { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.scan-stat { display: flex; justify-content: space-between; gap: 14px; font-size: 0.85rem; }
+.scan-stat .k { color: #cfd6d3; }
+.scan-stat .v { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.scan-actions { display: flex; gap: 8px; margin-top: 4px; }
+.scan-help { margin-top: 12px; padding: 12px 14px; border-radius: 8px; background: var(--accent-soft); border-left: 3px solid var(--accent); }
+.scan-help p { margin: 0 0 8px; }
+.scan-help ol { margin: 0 0 8px; padding-left: 20px; display: flex; flex-direction: column; gap: 10px; }
+.scan-help code { font-family: var(--font-mono); font-size: 0.85rem; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; overflow-wrap: anywhere; min-width: 0; flex: 1 1 200px; }
+.print { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+.print label { font-size: 0.82rem; color: var(--muted); }
+.print input { font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--fg); }
+@media (prefers-reduced-motion: reduce) { .progress > div { transition: none; } }
+</style>
+</head><body>
+<div class="scan" id="scan" hidden>
+  <canvas id="scan-canvas"></canvas>
+  <video id="scan-video" playsinline muted autoplay></video>
+  <div class="scan-top"><span id="scan-hint">Vise l'objet.</span></div>
+  <div class="scan-bottom">
+    <canvas id="scan-radar" width="240" height="240" aria-label="Couverture du scan"></canvas>
+    <div class="scan-side">
+      <div class="scan-stat"><span class="k">Tour 1, à hauteur</span><span class="v" id="scan-c1">0 / 24</span></div>
+      <div class="scan-stat"><span class="k">Tour 2, au-dessus</span><span class="v" id="scan-c2">0 / 12</span></div>
+      <div class="scan-stat"><span class="k">Plongée</span><span class="v" id="scan-elev">–</span></div>
+      <div class="scan-actions"><button class="btn primary" id="scan-finish" type="button">Terminer</button><button class="btn" id="scan-cancel" type="button">Annuler</button></div>
+    </div>
+  </div>
+</div>
+<div class="wrap">
+  <header class="top">
+    <h1>Photo vers STL</h1>
+    <p>Photographie un objet sous tous les angles, l'application sculpte son volume à partir des silhouettes et exporte un STL à l'échelle, prêt à trancher.</p>
+  </header>
+
+  <div class="layout">
+    <div class="col-left">
+      <section class="panel" id="panel-photos">
+        <h2><span class="n">1</span> Photos</h2>
+        <div class="row">
+          <button class="btn primary" id="btn-scan" type="button">Scan en direct</button>
+          <label class="btn" id="btn-film" for="video-capture">Filmer en tournant</label>
+          <input id="video-capture" type="file" accept="video/*" capture="environment" hidden>
+          <label class="btn" id="btn-pick" for="file-input">Choisir des photos</label>
+          <input id="file-input" type="file" accept="image/*" multiple hidden>
+          <label class="btn" id="btn-video" for="video-input">Choisir une vidéo</label>
+          <input id="video-input" type="file" accept="video/*" hidden>
+          <label class="btn ghost" id="btn-capture" for="capture-input">Photo à l'unité</label>
+          <input id="capture-input" type="file" accept="image/*" capture="environment" hidden>
+          <button class="btn ghost" id="btn-example" type="button">Exemple</button>
+          <button class="btn ghost" id="btn-clear" type="button" hidden>Tout effacer</button>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <label class="check hint" for="frames" style="margin:0">Images tirées d'une vidéo</label>
+          <select id="frames" class="mini"><option value="16">16</option><option value="24" selected>24</option><option value="36">36</option><option value="48">48</option></select>
+        </div>
+        <p class="hint" id="scan-note">Le plus précis : <strong>Scan en direct</strong>. Tourne autour de l'objet, les photos se prennent toutes seules et le radar passe au vert zone par zone. Le téléphone mesure lui-même ses angles. Sinon, <strong>Filmer en tournant</strong> : un tour complet à vitesse régulière, puis l'application tire les images de la vidéo.</p>
+        <label class="check hint" style="margin-top:10px"><input type="checkbox" id="sort-time" checked> Trier les photos par heure de prise (ordre de rotation)</label>
+        <div class="empty" id="empty">Aucune photo. Tourne autour de l'objet par pas réguliers et prends 12 à 24 photos, puis choisis-les ici (tu peux aussi les glisser-déposer).</div>
+        <div class="scan-help" id="scan-help" hidden>
+          <p><strong>Le scan en direct ne peut pas marcher sur claude.ai.</strong> Le site interdit la caméra en direct à toutes ses pages, même ouvertes dans un onglet à part. Il faut ouvrir l'application ailleurs.</p>
+          <p><strong>Solution sûre : ta propre adresse, gratuite, à faire une seule fois.</strong></p>
+          <ol>
+            <li><span id="help-step1">Télécharge le fichier de l'application.</span> <button class="btn primary" id="btn-get-app" type="button">Télécharger index.html</button></li>
+            <li>Sur <strong>github.com</strong> (crée un compte si besoin), appuie sur <strong>+</strong> puis <strong>New repository</strong>. Nom : <code>scan3d</code>, choisis <strong>Public</strong>, puis <strong>Create repository</strong>.</li>
+            <li>Dans le dépôt, appuie sur <strong>Add file</strong>, puis <strong>Upload files</strong>, choisis <code>index.html</code> dans Téléchargements, puis <strong>Commit changes</strong>.</li>
+            <li>Va dans <strong>Settings</strong>, puis <strong>Pages</strong>. Dans Branch, choisis <strong>main</strong> et <strong>/ (root)</strong>, puis <strong>Save</strong>.</li>
+            <li>Une minute plus tard, ouvre dans Chrome l'adresse <code>https://ton-identifiant.github.io/scan3d/</code>, appuie sur <strong>Scan en direct</strong> et autorise la caméra et les mouvements. Ajoute-la à l'écran d'accueil pour la retrouver.</li>
+          </ol>
+          <p class="hint">Seul le code de l'application devient public. Tes photos et tes scans restent sur ton téléphone : tout le calcul se fait dedans.</p>
+          <p class="hint"><strong>Essai rapide, pas toujours accepté :</strong> ouvre « Mes fichiers », puis Téléchargements, touche <code>index.html</code> et choisis Chrome. Certains téléphones refusent alors la caméra.</p>
+          <p class="hint">En attendant, « Filmer en tournant » marche ici, sans le radar.</p>
+        </div>
+        <p class="status" id="load-status" role="status" aria-live="polite">Démarrage de l'application…</p>
+        <div class="thumbs" id="thumbs"></div>
+        <div class="row" id="angles-row" hidden style="margin-top:10px">
+          <p class="hint" id="photo-count" style="margin:0;flex:1 1 220px"></p>
+          <button class="btn ghost" id="btn-spread" type="button">Répartir les angles uniformément</button>
+        </div>
+      </section>
+
+      <section class="panel" id="panel-settings">
+        <h2><span class="n">2</span> Réglages</h2>
+        <div class="fields">
+          <div class="field">
+            <label for="detect">Détection de l'objet</label>
+            <select id="detect"><option value="ml">Automatique (réseau de neurones)</option><option value="uniform">Fond uni (rapide)</option><option value="complex">Fond quelconque (couleurs)</option></select>
+          </div>
+          <div class="field">
+            <label for="capture">Prise de vue</label>
+            <select id="capture"><option value="handheld">À main levée autour de l'objet</option><option value="turntable">Plateau tournant, téléphone fixe</option></select>
+          </div>
+          <div class="field" id="field-elev">
+            <label for="elev">Hauteur du téléphone</label>
+            <select id="elev"><option value="sensor">Mesurée par le téléphone (scan)</option><option value="auto" selected>Calculée avec les deux mesures</option><option value="level">À hauteur de l'objet</option><option value="15">Légèrement au-dessus (≈ 15°)</option><option value="25">Un peu au-dessus (≈ 25°)</option><option value="40">En plongée (≈ 40°)</option><option value="60">Presque au-dessus (≈ 60°)</option></select>
+          </div>
+          <div class="field" id="field-focal">
+            <label for="focal">Objectif du téléphone</label>
+            <select id="focal"><option value="0.75">Standard (x1)</option><option value="0.38">Ultra grand-angle (x0,5)</option><option value="1.5">Zoom x2</option><option value="2.25">Zoom x3</option><option value="0">Ignorer la perspective</option></select>
+          </div>
+          <div class="field">
+            <label for="threshold">Sensibilité <output id="threshold-out">40</output></label>
+            <input type="range" id="threshold" min="8" max="140" value="40">
+          </div>
+          <div class="field" id="field-bg">
+            <label for="bg-mode">Couleur du fond</label>
+            <div class="row" style="gap:8px">
+              <select id="bg-mode" style="flex:1"><option value="auto">Détectée sur les bords</option><option value="manual">Choisie</option></select>
+              <input type="color" id="bg-color" value="#e8e6e0" hidden aria-label="Couleur du fond">
+            </div>
+          </div>
+          <div class="field">
+            <label for="direction">Sens de rotation de l'objet (vu de dessus)</label>
+            <select id="direction"><option value="1">Anti-horaire</option><option value="-1">Horaire</option></select>
+          </div>
+          <div class="field">
+            <label for="resolution">Finesse du volume</label>
+            <select id="resolution"><option value="128">Rapide (128)</option><option value="192" selected>Standard (192)</option><option value="256">Fine (256, plus lent)</option></select>
+          </div>
+          <div class="field">
+            <label for="smooth">Lissage du maillage <output id="smooth-out">4</output></label>
+            <input type="range" id="smooth" min="0" max="10" value="4">
+          </div>
+          <div class="field">
+            <label for="height">Hauteur réelle (mm)</label>
+            <input type="number" id="height" min="1" max="5000" step="0.1" value="80">
+          </div>
+          <div class="field">
+            <label for="width">Largeur réelle (mm, facultatif)</label>
+            <input type="number" id="width" min="1" max="5000" step="0.1" placeholder="ex. 95">
+          </div>
+          <div class="field">
+            <label for="fname">Nom du fichier</label>
+            <input type="text" id="fname" value="objet" maxlength="60">
+          </div>
+          <div class="field">
+            <label class="check" for="hollow"><input type="checkbox" id="hollow"> Objet creux ouvert en haut (bol, tasse, pot)</label>
+            <label for="wall" class="hint" style="margin:0">Épaisseur de paroi (mm)</label>
+            <input type="number" id="wall" min="0.5" max="50" step="0.5" value="3">
+          </div>
+          <div class="field" style="justify-content:flex-end">
+            <label class="check"><input type="checkbox" id="shadows"> Ignorer les ombres portées</label>
+            <label class="check"><input type="checkbox" id="mirror"> Inverser (miroir)</label>
+          </div>
+        </div>
+        <p class="hint" id="detect-status">Les vignettes montrent en couleur la silhouette retenue. Si une partie de l'objet manque, baisse la sensibilité ; si du fond est pris pour l'objet, monte-la.</p>
+      </section>
+
+      <section class="panel">
+        <h2><span class="n">3</span> Reconstruction</h2>
+        <div class="row">
+          <button class="btn primary" id="btn-run" type="button" disabled>Reconstruire en 3D</button>
+          <button class="btn" id="btn-download" type="button" disabled>Télécharger le STL</button>
+        </div>
+        <div class="progress" aria-hidden="true"><div id="bar"></div></div>
+        <div class="status" id="status" role="status" aria-live="polite"></div>
+        <ul class="warnings" id="warnings"></ul>
+      </section>
+    </div>
+
+    <div class="col-right">
+      <section class="panel">
+        <h2>Pièce</h2>
+        <div class="viewer">
+          <canvas id="gl"></canvas>
+          <div class="overlay" id="viewer-overlay">La pièce apparaîtra ici. Glisse pour tourner, molette ou pincement pour zoomer.</div>
+          <div class="badge" id="viewer-badge" hidden></div>
+        </div>
+        <div class="stats" id="stats" hidden>
+          <div class="stat"><div class="k">Dimensions</div><div class="v" id="st-dims">–</div></div>
+          <div class="stat"><div class="k">Volume</div><div class="v" id="st-vol">–</div></div>
+          <div class="stat"><div class="k">Triangles</div><div class="v" id="st-tris">–</div></div>
+          <div class="stat"><div class="k">Fichier STL</div><div class="v" id="st-size">–</div></div>
+        </div>
+        <div class="print" id="print-box" hidden>
+          <label for="print-h">Taille d'impression : hauteur (mm)</label>
+          <div class="row" style="gap:8px">
+            <input type="number" id="print-h" min="1" max="5000" step="1" style="width:110px">
+            <button class="btn ghost" id="print-real" type="button">Taille réelle</button>
+            <button class="btn ghost" id="print-50" type="button">Figurine 50 mm</button>
+            <button class="btn ghost" id="print-100" type="button">100 mm</button>
+          </div>
+          <p class="hint" id="print-info"></p>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <label class="check" for="show-colors"><input type="checkbox" id="show-colors" checked> Couleurs des photos</label>
+          <button class="btn" id="btn-color" type="button" disabled>Modèle en couleur (.ply, .obj)</button>
+        </div>
+        <p class="small" id="export-note"></p>
+      </section>
+
+      <section class="panel guide">
+        <h2>Comment photographier</h2>
+        <svg class="setup" viewBox="0 0 420 150" width="420" height="150" role="img" aria-label="Téléphone fixe face à un objet posé sur un plateau tournant, devant un fond uni">
+          <rect x="0" y="0" width="420" height="150" fill="none"/>
+          <rect x="150" y="18" width="250" height="100" rx="4" fill="var(--surface-2)" stroke="var(--line)"/>
+          <text x="275" y="33" text-anchor="middle" font-size="11" fill="var(--muted)" font-family="var(--font-text)">fond uni, sans motif</text>
+          <ellipse cx="275" cy="112" rx="70" ry="14" fill="var(--grid)" stroke="var(--line)"/>
+          <path d="M215 112 a60 10 0 1 1 120 0" fill="none" stroke="var(--accent)" stroke-width="2" stroke-dasharray="4 4"/>
+          <polygon points="335,112 327,105 329,116" fill="var(--accent)"/>
+          <rect x="255" y="56" width="40" height="52" rx="6" fill="var(--mesh)"/>
+          <path d="M295 70 q18 8 0 26" fill="none" stroke="var(--mesh)" stroke-width="7" stroke-linecap="round"/>
+          <text x="275" y="140" text-anchor="middle" font-size="11" fill="var(--muted)" font-family="var(--font-text)">plateau tournant : 1 photo tous les 15° à 30°</text>
+          <rect x="40" y="48" width="30" height="58" rx="5" fill="var(--fg)"/>
+          <rect x="44" y="54" width="22" height="42" rx="2" fill="var(--viewer-bg)"/>
+          <line x1="55" y1="106" x2="55" y2="132" stroke="var(--fg)" stroke-width="3"/>
+          <line x1="40" y1="132" x2="70" y2="132" stroke="var(--fg)" stroke-width="3"/>
+          <line x1="72" y1="77" x2="250" y2="77" stroke="var(--muted)" stroke-dasharray="3 4"/>
+          <text x="55" y="40" text-anchor="middle" font-size="11" fill="var(--muted)" font-family="var(--font-text)">téléphone fixe</text>
+        </svg>
+        <ol>
+          <li><strong>Scan en direct</strong> : fais un premier tour avec le téléphone à hauteur de l'objet ou un peu au-dessus, puis un second tour plus haut. Chaque zone du radar passe au vert quand elle est scannée. Le scan en direct demande la caméra et les capteurs d'orientation : il marche dans le fichier de l'application ouvert dans Chrome ou Safari, pas dans la page claude.ai. Sinon, <strong>filme en tournant</strong>.</li>
+          <li><strong>Objet entier dans l'image</strong>, sans toucher les bords, et toujours au centre. La détection automatique accepte un fond quelconque ; un fond uni reste plus sûr.</li>
+          <li><strong>Téléphone au niveau du milieu de l'objet</strong>, à au moins 4 fois sa taille (zoome plutôt que de t'approcher), même distance à chaque photo si possible.</li>
+          <li><strong>Avec des photos séparées</strong>, prends-en 12 à 24 réparties sur le tour, et vérifie sous chaque vignette l'angle parcouru depuis la première. Trois photos prises du même côté n'apportent rien de plus qu'une seule.</li>
+          <li><strong>Mesure l'objet</strong> avec une règle : sa hauteur et sa plus grande largeur (le diamètre pour un objet rond). Avec les deux mesures, l'application calcule seule l'angle de vue du téléphone et respecte les proportions. Avec une seule, elle suppose que tu filmais légèrement au-dessus de l'objet.</li>
+          <li><strong>Lumière douce et stable</strong>, sans ombre dure. Désactive le flash et le HDR si tu peux.</li>
+          <li>Pour un petit objet, <strong>approche-toi</strong> pour qu'il occupe au moins un tiers de la largeur de l'image, et garde la même distance pendant tout le tour.</li>
+        </ol>
+        <p class="small">Méthode : enveloppe visuelle (shape-from-silhouette). Elle restitue bien les formes pleines, bosselées ou anguleuses, mais ne voit pas les creux cachés dans la silhouette (intérieur d'une tasse, trou d'une anse vu de biais) ni le relief fin comme un nez ou des plis : ces détails apparaissent seulement en couleur. Le maillage produit est fermé et à l'échelle, donc directement imprimable. La détection automatique utilise un petit réseau de neurones (U²-Net) qui tourne entièrement dans ton navigateur : aucune photo n'est envoyée sur un serveur.</p>
+      </section>
+    </div>
+  </div>
+</div>
+<script>window.PHOTO_STL_ASSETS = "cdn";</script>
+<script id="engine">
+// Moteur de reconstruction : silhouettes -> enveloppe visuelle (voxels) -> maillage -> STL
+// Fonctionne dans un Web Worker (self.onmessage) ou sous Node (module.exports) pour les tests.
+(function (root) {
+  'use strict';
+
+  // ---------- Segmentation ----------
+  function medianOf(arr) {
+    const a = Array.from(arr).sort((x, y) => x - y);
+    return a.length ? a[a.length >> 1] : 0;
+  }
+
+  function estimateBackground(rgba, w, h) {
+    const t = Math.max(2, Math.round(Math.min(w, h) * 0.03));
+    const rs = [], gs = [], bs = [];
+    const step = 2;
+    for (let y = 0; y < h; y += step) {
+      for (let x = 0; x < w; x += step) {
+        if (x >= t && x < w - t && y >= t && y < h - t) { x = w - t - 1; continue; }
+        const o = (y * w + x) * 4;
+        rs.push(rgba[o]); gs.push(rgba[o + 1]); bs.push(rgba[o + 2]);
+      }
+    }
+    return [medianOf(rs), medianOf(gs), medianOf(bs)];
+  }
+
+
+  // ---------- Segmentation sur fond quelconque (modèle de couleurs fond / objet + régularisation spatiale) ----------
+  const NB = 16; // classes par canal (échelle racine : plus de finesse dans les sombres)
+  const BIN_LUT = (() => { const t = new Uint8Array(256); for (let c = 0; c < 256; c++) t[c] = Math.min(NB - 1, Math.floor(Math.sqrt(c / 255) * NB)); return t; })();
+  function blurHist(h) {
+    const o = new Float32Array(h.length);
+    for (let r = 0; r < NB; r++) for (let g = 0; g < NB; g++) for (let b = 0; b < NB; b++) {
+      let s = 0, n = 0;
+      for (let dr = -1; dr <= 1; dr++) { const rr = r + dr; if (rr < 0 || rr >= NB) continue;
+        for (let dg = -1; dg <= 1; dg++) { const gg = g + dg; if (gg < 0 || gg >= NB) continue;
+          for (let db = -1; db <= 1; db++) { const bb = b + db; if (bb < 0 || bb >= NB) continue;
+            const wgt = (dr === 0 && dg === 0 && db === 0) ? 1 : 0.2; s += wgt * h[(rr * NB + gg) * NB + bb]; n += wgt; } } }
+      o[(r * NB + g) * NB + b] = s / n;
+    }
+    return o;
+  }
+  function boxBlur2D(src, w, h, r) { // flou boîte séparable sur Float32Array
+    const tmp = new Float32Array(w * h), out = new Float32Array(w * h);
+    for (let y = 0; y < h; y++) {
+      let s = 0; const row = y * w;
+      for (let x = -r; x <= r; x++) s += src[row + Math.min(w - 1, Math.max(0, x))];
+      for (let x = 0; x < w; x++) { tmp[row + x] = s / (2 * r + 1); s += src[row + Math.min(w - 1, x + r + 1)] - src[row + Math.max(0, x - r)]; }
+    }
+    for (let x = 0; x < w; x++) {
+      let s = 0;
+      for (let y = -r; y <= r; y++) s += tmp[Math.min(h - 1, Math.max(0, y)) * w + x];
+      for (let y = 0; y < h; y++) { out[y * w + x] = s / (2 * r + 1); s += tmp[Math.min(h - 1, y + r + 1) * w + x] - tmp[Math.max(0, y - r) * w + x]; }
+    }
+    return out;
+  }
+  function autoRect(rgba, w, h, bins) {
+    // rareté des couleurs par rapport au pourtour -> boîte englobante de la plus grande tache
+    const n = w * h, total = NB * NB * NB;
+    const t = Math.max(4, Math.round(Math.min(w, h) * 0.06));
+    let hb = new Float32Array(total), nb = 0;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (x < t || y < t || x >= w - t || y >= h - t) { hb[bins[y * w + x]]++; nb++; }
+    hb = blurHist(hb);
+    const dens = new Float32Array(n);
+    for (let p = 0; p < n; p++) dens[p] = hb[bins[p]] / nb * total;
+    const sm = boxBlur2D(dens, w, h, Math.max(2, Math.round(Math.min(w, h) * 0.02)));
+    const m = new Uint8Array(n);
+    for (let p = 0; p < n; p++) m[p] = sm[p] < 2.5 ? 1 : 0;
+    morphOpenClose(m, w, h); keepLargestComponent(m, w, h);
+    const st = maskStats(m, w, h);
+    if (st.area < n * 0.003) return [0.2, 0.05, 0.8, 0.95];
+    const mw = st.right - st.left + 1, mh = st.bottom - st.top + 1;
+    return [Math.max(0, (st.left - mw * 0.25) / w), Math.max(0, (st.top - mh * 0.12) / h), Math.min(1, (st.right + mw * 0.25) / w), Math.min(1, (st.bottom + mh * 0.12) / h)];
+  }
+  function segmentComplex(rgba, w, h, opts) {
+    const T = opts.threshold == null ? 40 : opts.threshold;
+    const n = w * h, total = NB * NB * NB;
+    const bins = new Int32Array(n);
+    for (let p = 0, o = 0; p < n; p++, o += 4) bins[p] = (BIN_LUT[rgba[o]] * NB + BIN_LUT[rgba[o + 1]]) * NB + BIN_LUT[rgba[o + 2]];
+    const rect = opts.rect || autoRect(rgba, w, h, bins);
+    const x0 = Math.round(rect[0] * w), y0 = Math.round(rect[1] * h), x1 = Math.round(rect[2] * w), y1 = Math.round(rect[3] * h);
+    const inR = new Uint8Array(n);
+    for (let y = Math.max(0, y0); y < Math.min(h, y1); y++) for (let x = Math.max(0, x0); x < Math.min(w, x1); x++) inR[y * w + x] = 1;
+    // 1. modèle du fond : tout ce qui est hors du cadre
+    let hb = new Float32Array(total), nb = 0;
+    for (let p = 0; p < n; p++) if (!inR[p]) { hb[bins[p]]++; nb++; }
+    if (nb < 100) { for (let p = 0; p < n; p++) { hb[bins[p]]++; } nb = n; }
+    hb = blurHist(hb);
+    const tau = 6 * (T / 40);
+    const fg = new Uint8Array(n);
+    for (let p = 0; p < n; p++) fg[p] = (inR[p] && hb[bins[p]] / nb * total < tau) ? 1 : 0;
+    // 2. raffinement : rapport de vraisemblance objet / fond, lissé spatialement
+    const rad = Math.max(2, Math.round(Math.min(w, h) * 0.015));
+    const L = new Float32Array(n);
+    const bias = Math.log(T / 40); // sensibilité : > 0 favorise le fond
+    for (let it = 0; it < 3; it++) {
+      let hf = new Float32Array(total), hg = new Float32Array(total), nf = 0, ng = 0;
+      for (let p = 0; p < n; p++) { if (fg[p]) { hf[bins[p]]++; nf++; } else { hg[bins[p]]++; ng++; } }
+      if (nf < 50) break;
+      hf = blurHist(hf); hg = blurHist(hg);
+      for (let p = 0; p < n; p++) {
+        if (!inR[p]) { L[p] = -3; continue; }
+        const a = (hf[bins[p]] + 0.5) / nf, b = (hg[bins[p]] + 0.5) / ng;
+        L[p] = Math.max(-3, Math.min(3, Math.log(a / b) - bias));
+      }
+      const S = boxBlur2D(L, w, h, rad);
+      for (let p = 0; p < n; p++) fg[p] = (inR[p] && S[p] > 0) ? 1 : 0;
+    }
+    morphOpenClose(fg, w, h);
+    keepLargestComponent(fg, w, h);
+    fillHoles(fg, w, h);
+    return { mask: fg, bg: null, rect, stats: maskStats(fg, w, h) };
+  }
+
+  function segment(rgba, w, h, opts) {
+    if (opts.mode === 'complex') return segmentComplex(rgba, w, h, opts);
+    if (opts.mode === 'ml' && opts.ml) {
+      const level = Math.min(0.9, Math.max(0.1, 0.5 * (opts.threshold == null ? 40 : opts.threshold) / 40));
+      const mask = maskFromSaliency(opts.ml.sal, ML.size, w, h, level, opts.ml.rect);
+      return { mask, bg: null, stats: maskStats(mask, w, h) };
+    }
+    const bg = opts.bg || estimateBackground(rgba, w, h);
+    const T = opts.threshold == null ? 40 : opts.threshold;
+    const shadows = !!opts.ignoreShadows;
+    const mask = new Uint8Array(w * h);
+    const bgSum = bg[0] + bg[1] + bg[2] + 1e-6;
+    const bgLum = bgSum / 3;
+    const bgn = [bg[0] / bgSum, bg[1] / bgSum, bg[2] / bgSum];
+    for (let p = 0, o = 0; p < w * h; p++, o += 4) {
+      const r = rgba[o], g = rgba[o + 1], b = rgba[o + 2];
+      const dr = r - bg[0], dg = g - bg[1], db = b - bg[2];
+      const d = Math.sqrt((dr * dr + dg * dg + db * db) / 3);
+      let isObj = d > T;
+      if (isObj && shadows) {
+        const s = r + g + b + 1e-6;
+        const cr = r / s - bgn[0], cg = g / s - bgn[1], cb = b / s - bgn[2];
+        const dChroma = Math.sqrt(cr * cr + cg * cg + cb * cb) * 255;
+        const lum = s / 3;
+        if (dChroma < Math.max(12, T * 0.35) && lum < bgLum && lum > bgLum * 0.35) isObj = false;
+      }
+      mask[p] = isObj ? 1 : 0;
+    }
+    morphOpenClose(mask, w, h);
+    keepLargestComponent(mask, w, h);
+    fillHoles(mask, w, h);
+    const st = maskStats(mask, w, h);
+    return { mask, bg, stats: st };
+  }
+
+  function erode(src, w, h, dst) {
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      let v = 1;
+      if (x === 0 || y === 0 || x === w - 1 || y === h - 1) v = 0;
+      else {
+        for (let dy = -1; dy <= 1 && v; dy++) for (let dx = -1; dx <= 1; dx++) {
+          if (!src[(y + dy) * w + x + dx]) { v = 0; break; }
+        }
+      }
+      dst[y * w + x] = v;
+    }
+  }
+  function dilate(src, w, h, dst) {
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      let v = 0;
+      for (let dy = -1; dy <= 1 && !v; dy++) {
+        const yy = y + dy; if (yy < 0 || yy >= h) continue;
+        for (let dx = -1; dx <= 1; dx++) {
+          const xx = x + dx; if (xx < 0 || xx >= w) continue;
+          if (src[yy * w + xx]) { v = 1; break; }
+        }
+      }
+      dst[y * w + x] = v;
+    }
+  }
+  function morphOpenClose(mask, w, h) {
+    const tmp = new Uint8Array(w * h);
+    erode(mask, w, h, tmp); dilate(tmp, w, h, mask);   // ouverture : enlève le bruit
+    dilate(mask, w, h, tmp); erode(tmp, w, h, mask);   // fermeture : bouche les petits trous
+  }
+
+  function keepLargestComponent(mask, w, h) {
+    const label = new Int32Array(w * h);
+    const stack = new Int32Array(w * h);
+    let best = 0, bestSize = 0, cur = 0;
+    const sizes = [0];
+    for (let p = 0; p < w * h; p++) {
+      if (!mask[p] || label[p]) continue;
+      cur++; let sp = 0, size = 0; stack[sp++] = p; label[p] = cur;
+      while (sp) {
+        const q = stack[--sp]; size++;
+        const x = q % w, y = (q - x) / w;
+        if (x > 0 && mask[q - 1] && !label[q - 1]) { label[q - 1] = cur; stack[sp++] = q - 1; }
+        if (x < w - 1 && mask[q + 1] && !label[q + 1]) { label[q + 1] = cur; stack[sp++] = q + 1; }
+        if (y > 0 && mask[q - w] && !label[q - w]) { label[q - w] = cur; stack[sp++] = q - w; }
+        if (y < h - 1 && mask[q + w] && !label[q + w]) { label[q + w] = cur; stack[sp++] = q + w; }
+      }
+      sizes.push(size);
+      if (size > bestSize) { bestSize = size; best = cur; }
+    }
+    if (best) for (let p = 0; p < w * h; p++) mask[p] = label[p] === best ? 1 : 0;
+  }
+
+  function fillHoles(mask, w, h) {
+    const reach = new Uint8Array(w * h);
+    const stack = new Int32Array(w * h);
+    let sp = 0;
+    const push = (p) => { if (!mask[p] && !reach[p]) { reach[p] = 1; stack[sp++] = p; } };
+    for (let x = 0; x < w; x++) { push(x); push((h - 1) * w + x); }
+    for (let y = 0; y < h; y++) { push(y * w); push(y * w + w - 1); }
+    while (sp) {
+      const q = stack[--sp];
+      const x = q % w, y = (q - x) / w;
+      if (x > 0) push(q - 1);
+      if (x < w - 1) push(q + 1);
+      if (y > 0) push(q - w);
+      if (y < h - 1) push(q + w);
+    }
+    for (let p = 0; p < w * h; p++) if (!mask[p] && !reach[p]) mask[p] = 1;
+  }
+
+  function maskStats(mask, w, h) {
+    let n = 0, su = 0, left = w, right = -1, top = h, bottom = -1;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      if (!mask[y * w + x]) continue;
+      n++; su += x;
+      if (x < left) left = x; if (x > right) right = x;
+      if (y < top) top = y; if (y > bottom) bottom = y;
+    }
+    return { area: n, cu: n ? su / n : w / 2, left, right, top, bottom, touchesBorder: n > 0 && (left === 0 || top === 0 || right === w - 1 || bottom === h - 1) };
+  }
+
+  // ---------- Caméras ----------
+  // Repère monde : X et Z horizontaux, Y vers le BAS (comme les lignes de l'image), 0 au sommet de l'objet.
+  // Chaque vue fournit project(X, Y, Z) -> [u, v, profondeur] et forward(X, Y, Z) -> direction de visée.
+  function buildCameras(views, opts) {
+    const n = views.length, w = views[0].w, h = views[0].h;
+    const dir = opts.direction || 1;
+    const persp = opts.camera === 'persp';
+    const cams = [];
+    let H, Rworld = 0;
+    if (opts.camera === 'orbit') {
+      // caméra qui tourne autour de l'objet, à une hauteur quelconque (angle de plongée « elevation »),
+      // l'objet pouvant être n'importe où dans l'image. Centre de l'objet = origine ; demi-diagonale ≈ 1.
+      const f = (opts.focal || 0.75) * Math.max(w, h), cx = w / 2, cy = h / 2;
+      const e0 = opts.elevation || 0, sweep = opts.sweep || 1;
+      for (const v of views) {
+        const e = v.elev != null ? v.elev : e0;          // plongée mesurée par le téléphone, sinon valeur commune
+        const ce = Math.cos(e), se = Math.sin(e);
+        const st = v.stats;
+        const half = Math.max(3, Math.hypot(st.right - st.left + 1, st.bottom - st.top + 1) / 2);
+        const D = f / half * (v.distScale || 1);
+        const th = dir * sweep * (v.angle == null ? 0 : v.angle);
+        const c = Math.cos(th), s = Math.sin(th);
+        const C = [D * ce * s, -D * se, -D * ce * c];
+        // orientation sans roulis (téléphone droit) : on cherche le cap et la plongée de l'axe optique
+        // tels que le centre de l'objet (origine) tombe au centre de sa silhouette dans l'image.
+        const g = norm3([-C[0], -C[1], -C[2]]);
+        const gam = Math.atan2(g[0], g[2]), bet = Math.asin(Math.max(-1, Math.min(1, g[1])));
+        const sh = v.aimShift || [0, 0];
+        const ta = (st.cu + sh[0] - cx) / f, tb = ((st.top + st.bottom) / 2 + sh[1] - cy) / f;
+        const ang = solveAim(bet, ta, tb);
+        const psi = gam - ang[0], phi = ang[1];
+        const F2 = [Math.sin(psi) * Math.cos(phi), Math.sin(phi), Math.cos(psi) * Math.cos(phi)];
+        const R2 = [Math.cos(psi), 0, -Math.sin(psi)];
+        const Dn2 = cross3(F2, R2);
+        cams.push({
+          project(X, Y, Z) { const rx = X - C[0], ry = Y - C[1], rz = Z - C[2]; const zc = rx * F2[0] + ry * F2[1] + rz * F2[2]; return [cx + f * (rx * R2[0] + ry * R2[1] + rz * R2[2]) / zc, cy + f * (rx * Dn2[0] + ry * Dn2[1] + rz * Dn2[2]) / zc, zc]; },
+          forward(X, Y, Z, out) { const rx = X - C[0], ry = Y - C[1], rz = Z - C[2]; const l = Math.hypot(rx, ry, rz) || 1; out[0] = rx / l; out[1] = ry / l; out[2] = rz / l; },
+        });
+      }
+      return { cams, H: 2.6, R: 1.3, center: true };
+    }
+    if (persp) {
+      H = 1000; // unités monde arbitraires (remises à l'échelle à la fin)
+      const f = (opts.focal || 0.75) * Math.max(w, h);
+      const cx = w / 2, cy = h / 2;
+      for (const v of views) {
+        const st = v.stats;
+        const hp = Math.max(4, st.bottom - st.top + 1);
+        const d = f * H / hp;                       // distance caméra-axe
+        const Ycam = (cy - st.top) * d / f;          // hauteur de la caméra (mesurée vers le bas depuis le sommet)
+        const alpha = Math.atan2(st.cu - cx, f);     // décalage horizontal de l'objet dans l'image
+        const th = dir * (v.angle == null ? 0 : v.angle);
+        const c = Math.cos(th), s = Math.sin(th);
+        const Dx = -s, Dz = c, Rx = c, Rz = s;       // direction vers l'axe, et droite
+        const ca = Math.cos(alpha), sa = Math.sin(alpha);
+        const Fx = ca * Dx - sa * Rx, Fz = ca * Dz - sa * Rz;     // axe optique
+        const RCx = ca * Rx + sa * Dx, RCz = ca * Rz + sa * Dz;   // droite de la caméra
+        const Cx = -d * Dx, Cz = -d * Dz;
+        cams.push({
+          project(X, Y, Z) { const rx = X - Cx, rz = Z - Cz; const zc = rx * Fx + rz * Fz; const xc = rx * RCx + rz * RCz; return [cx + f * xc / zc, cy + f * (Y - Ycam) / zc, zc]; },
+          forward(X, Y, Z, out) { const rx = X - Cx, ry = Y - Ycam, rz = Z - Cz; const l = Math.hypot(rx, ry, rz) || 1; out[0] = rx / l; out[1] = ry / l; out[2] = rz / l; },
+        });
+        // rayon horizontal maximal vu par cette caméra (sur le plan de l'axe)
+        Rworld = Math.max(Rworld, Math.abs(st.left - st.cu) * d / f, Math.abs(st.right - st.cu) * d / f);
+      }
+    } else {
+      // orthographique ; à main levée chaque silhouette est remise à la même hauteur
+      let axis = 0, top = h, bottom = -1, Href = 0;
+      for (const v of views) { axis += v.stats.cu; top = Math.min(top, v.stats.top); bottom = Math.max(bottom, v.stats.bottom); Href = Math.max(Href, v.stats.bottom - v.stats.top + 1); }
+      axis /= n;
+      if (!opts.handheld) Href = bottom - top + 1;
+      H = Href;
+      for (const v of views) {
+        const st = v.stats;
+        const fr = opts.handheld ? { cu: st.cu, top: st.top, scale: (st.bottom - st.top + 1) / Href } : { cu: axis, top, scale: 1 };
+        const th = dir * (v.angle == null ? 0 : v.angle);
+        const c = Math.cos(th), s = Math.sin(th);
+        cams.push({
+          project(X, Y, Z) { return [fr.cu + (X * c + Z * s) * fr.scale, fr.top + Y * fr.scale, 1e6 - X * s + Z * c]; }, // profondeur décalée : toujours positive
+          forward(X, Y, Z, out) { out[0] = -s; out[1] = 0; out[2] = c; },
+        });
+        Rworld = Math.max(Rworld, Math.abs(st.left - fr.cu) / fr.scale, Math.abs(st.right - fr.cu) / fr.scale);
+      }
+    }
+    return { cams, H, R: Rworld * 1.05 + 1 };
+  }
+
+  // Trouve (delta, phi) : écart de cap entre la direction de l'objet et l'axe optique, et plongée de l'axe,
+  // pour que la direction de l'objet (plongée beta) se projette en (ta, tb) dans l'image.
+  function solveAim(beta, ta, tb) {
+    const cb = Math.cos(beta), sb = Math.sin(beta);
+    const fx = (d, p) => { const cd = Math.cos(d), cp = Math.cos(p), sp = Math.sin(p); const z = cp * cb * cd + sp * sb; return [cb * Math.sin(d) / z - ta, (cp * sb - sp * cb * cd) / z - tb]; };
+    let d = Math.atan(ta), p = beta - Math.atan(tb);
+    for (let it = 0; it < 20; it++) {
+      const r = fx(d, p); if (Math.abs(r[0]) + Math.abs(r[1]) < 1e-9) break;
+      const e = 1e-5, a = fx(d + e, p), b = fx(d, p + e);
+      const j11 = (a[0] - r[0]) / e, j21 = (a[1] - r[1]) / e, j12 = (b[0] - r[0]) / e, j22 = (b[1] - r[1]) / e;
+      const det = j11 * j22 - j12 * j21; if (Math.abs(det) < 1e-12) break;
+      d -= (r[0] * j22 - r[1] * j12) / det; p -= (j11 * r[1] - j21 * r[0]) / det;
+    }
+    return [d, p];
+  }
+  function norm3(v) { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; }
+  function cross3(a, b) { return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]; }
+  function lin2(p, A, q, B) { return [p * A[0] + q * B[0], p * A[1] + q * B[1], p * A[2] + q * B[2]]; }
+
+  // ---------- Sculpture de voxels (enveloppe visuelle) ----------
+  function carve(views, res, progress, opts) {
+    const n = views.length, w = views[0].w, h = views[0].h;
+    const cam = buildCameras(views, opts);
+    const R = cam.R, H = cam.H;
+    const ymin = cam.center ? -H / 2 : -0.03 * H, ymax = cam.center ? H / 2 : 1.03 * H;
+    const s = Math.max(2 * R, ymax - ymin) / (res - 2);
+    const nx = Math.ceil(2 * R / s) + 2, nz = nx, ny = Math.ceil((ymax - ymin) / s) + 2;
+    const x0 = -R - 0.5 * s, y0 = ymin - 0.5 * s, z0 = -R - 0.5 * s; // centre de la case i = x0 + i*s
+    const occ = new Uint8Array(nx * ny * nz);
+    for (let i = 1; i < nx - 1; i++) for (let k = 1; k < nz - 1; k++) {
+      const base = (i * nz + k) * ny;
+      for (let j = 1; j < ny - 1; j++) occ[base + j] = 1;
+    }
+    // tolérance : un voxel survit s'il n'est rejeté que par quelques vues (détourage raté sur une image)
+    const tol = opts.tolerance == null ? 0 : opts.tolerance;
+    const fails = new Uint8Array(nx * ny * nz);
+    const unknownOutside = opts.unknownOutside !== false;
+    for (let vi = 0; vi < n; vi++) {
+      const view = views[vi], pr = cam.cams[vi].project, mask = view.mask, st = view.stats;
+      // hors de l'image : inconnu seulement du côté où la silhouette touche le bord (objet coupé) ; sinon c'est vide
+      const uL = unknownOutside && st.left <= 0, uR = unknownOutside && st.right >= w - 1, uT = unknownOutside && st.top <= 0, uB = unknownOutside && st.bottom >= h - 1;
+      for (let i = 1; i < nx - 1; i++) {
+        const X = x0 + i * s;
+        for (let k = 1; k < nz - 1; k++) {
+          const Z = z0 + k * s;
+          const base = (i * nz + k) * ny;
+          for (let j = 1; j < ny - 1; j++) {
+            if (!occ[base + j]) continue;
+            const p = pr(X, y0 + j * s, Z);
+            const u = Math.round(p[0]), v = Math.round(p[1]);
+            let miss;
+            if (p[2] <= 0) miss = !unknownOutside;
+            else if (u < 0) miss = !uL; else if (u >= w) miss = !uR; else if (v < 0) miss = !uT; else if (v >= h) miss = !uB;
+            else miss = !mask[v * w + u];
+            if (miss && ++fails[base + j] > tol) occ[base + j] = 0;
+          }
+        }
+      }
+      if (progress) progress((vi + 1) / n);
+    }
+    return { occ, nx, ny, nz, voxel: s, x0, y0, z0, cams: cam.cams };
+  }
+
+  // ---------- Creusage d'un objet ouvert vers le haut (bol, tasse, pot) ----------
+  // On garde une paroi d'épaisseur « wall » (en voxels) sur chaque tranche horizontale, et un fond d'épaisseur « bottom ».
+  function hollowOpenTop(c, wall, bottom) {
+    const { occ, nx, ny, nz } = c;
+    let jMin = ny, jMax = -1;
+    for (let i = 0; i < nx; i++) for (let k = 0; k < nz; k++) { const base = (i * nz + k) * ny; for (let j = 0; j < ny; j++) if (occ[base + j]) { if (j < jMin) jMin = j; if (j > jMax) jMax = j; } }
+    if (jMax - jMin < 3) return 0;
+    const jEnd = jMax - Math.max(1, Math.round(bottom));
+    const dist = new Float32Array(nx * nz); let removed = 0;
+    for (let j = jMin; j <= jEnd; j++) {
+      for (let i = 0; i < nx; i++) for (let k = 0; k < nz; k++) dist[i * nz + k] = occ[(i * nz + k) * ny + j] ? 1e9 : 0;
+      // distance de chanfrein 2D au bord de la tranche
+      for (let i = 0; i < nx; i++) for (let k = 0; k < nz; k++) { const q = i * nz + k; if (!dist[q]) continue; let d = dist[q];
+        if (i > 0) d = Math.min(d, dist[q - nz] + 1); if (k > 0) d = Math.min(d, dist[q - 1] + 1);
+        if (i > 0 && k > 0) d = Math.min(d, dist[q - nz - 1] + 1.414); if (i > 0 && k < nz - 1) d = Math.min(d, dist[q - nz + 1] + 1.414); dist[q] = d; }
+      for (let i = nx - 1; i >= 0; i--) for (let k = nz - 1; k >= 0; k--) { const q = i * nz + k; if (!dist[q]) continue; let d = dist[q];
+        if (i < nx - 1) d = Math.min(d, dist[q + nz] + 1); if (k < nz - 1) d = Math.min(d, dist[q + 1] + 1);
+        if (i < nx - 1 && k < nz - 1) d = Math.min(d, dist[q + nz + 1] + 1.414); if (i < nx - 1 && k > 0) d = Math.min(d, dist[q + nz - 1] + 1.414); dist[q] = d; }
+      for (let q = 0; q < nx * nz; q++) if (dist[q] > wall + 0.5) { occ[q * ny + j] = 0; removed++; }
+    }
+    return removed;
+  }
+
+  // ---------- Recherche automatique de la pose (plongée, sens du tour, amplitude) ----------
+  // On essaie plusieurs hypothèses et on garde celle où le volume sculpté se reprojette le mieux sur les silhouettes.
+  function hullScore(views, carved, perView) {
+    const { occ, nx, ny, nz, voxel: s, x0, y0, z0, cams } = carved;
+    const w = views[0].w, h = views[0].h, K = Math.max(1, Math.round(Math.max(w, h) / 128));
+    const lw = Math.ceil(w / K), lh = Math.ceil(h / K);
+    const pts = [];
+    for (let i = 0; i < nx; i++) for (let k = 0; k < nz; k++) { const base = (i * nz + k) * ny; for (let j = 0; j < ny; j++) if (occ[base + j]) pts.push(x0 + i * s, y0 + j * s, z0 + k * s); }
+    if (pts.length < 30) return 0;
+    let total = 0;
+    views.forEach((view, vi) => {
+      const lm = new Uint8Array(lw * lh), lp = new Uint8Array(lw * lh);
+      for (let y = 0; y < h; y += K) for (let x = 0; x < w; x += K) if (view.mask[y * w + x]) lm[(y / K | 0) * lw + (x / K | 0)] = 1;
+      const pr = cams[vi].project;
+      for (let q = 0; q < pts.length; q += 3) {
+        const p = pr(pts[q], pts[q + 1], pts[q + 2]); if (p[2] <= 0) continue;
+        const r = Math.max(0.5, 0.75 * (Math.max(w, h) * 0.75) * s / p[2] / K);
+        const ux = p[0] / K, vy = p[1] / K, ri = Math.ceil(r);
+        for (let dy = -ri; dy <= ri; dy++) { const yy = Math.round(vy) + dy; if (yy < 0 || yy >= lh) continue;
+          for (let dx = -ri; dx <= ri; dx++) { const xx = Math.round(ux) + dx; if (xx < 0 || xx >= lw) continue; lp[yy * lw + xx] = 1; } }
+      }
+      let inter = 0, uni = 0;
+      for (let t = 0; t < lw * lh; t++) { if (lm[t] && lp[t]) inter++; if (lm[t] || lp[t]) uni++; }
+      const iou = uni ? inter / uni : 0;
+      // excès : part de la projection qui tombe hors de la silhouette élargie de 2 pixels (insensible au flou)
+      const dil = new Uint8Array(lw * lh);
+      for (let y = 0; y < lh; y++) for (let x = 0; x < lw; x++) if (lm[y * lw + x]) for (let dy = -2; dy <= 2; dy++) { const yy = y + dy; if (yy < 0 || yy >= lh) continue; for (let dx = -2; dx <= 2; dx++) { const xx = x + dx; if (xx >= 0 && xx < lw) dil[yy * lw + xx] = 1; } }
+      let proj = 0, out = 0; for (let t = 0; t < lw * lh; t++) if (lp[t]) { proj++; if (!dil[t]) out++; }
+      if (perView) perView.push({ iou, excess: proj ? out / proj : 1 });
+      total += iou;
+    });
+    return total / views.length;
+  }
+  // couverture moyenne des silhouettes par la projection des voxels pleins compris entre les couches jTop et jBot
+  function coverage(views, carved, jTop, jBot, lowMasks) {
+    const { occ, nx, ny, nz, voxel: s, x0, y0, z0, cams } = carved;
+    const w = views[0].w, h = views[0].h, K = lowMasks.K, lw = lowMasks.lw, lh = lowMasks.lh;
+    const pts = [];
+    for (let i = 0; i < nx; i++) for (let k = 0; k < nz; k++) { const base = (i * nz + k) * ny; for (let j = jTop; j <= jBot; j++) if (occ[base + j]) pts.push(x0 + i * s, y0 + j * s, z0 + k * s); }
+    let total = 0;
+    views.forEach((view, vi) => {
+      const lm = lowMasks.m[vi], lp = new Uint8Array(lw * lh), pr = cams[vi].project;
+      for (let q = 0; q < pts.length; q += 3) {
+        const p = pr(pts[q], pts[q + 1], pts[q + 2]); if (p[2] <= 0) continue;
+        const r = Math.max(0.5, 0.6 * lowMasks.f * s / p[2] / K), ri = Math.ceil(r), ux = Math.round(p[0] / K), vy = Math.round(p[1] / K);
+        for (let dy = -ri; dy <= ri; dy++) { const yy = vy + dy; if (yy < 0 || yy >= lh) continue; for (let dx = -ri; dx <= ri; dx++) { const xx = ux + dx; if (xx >= 0 && xx < lw) lp[yy * lw + xx] = 1; } }
+      }
+      let inter = 0, area = 0;
+      for (let t = 0; t < lw * lh; t++) if (lm[t]) { area++; if (lp[t]) inter++; }
+      total += area ? inter / area : 1;
+    });
+    return total / views.length;
+  }
+  function lowResMasks(views, focal) {
+    const w = views[0].w, h = views[0].h, K = Math.max(1, Math.round(Math.max(w, h) / 160));
+    const lw = Math.ceil(w / K), lh = Math.ceil(h / K);
+    const m = views.map(view => { const lm = new Uint8Array(lw * lh); for (let y = 0; y < h; y += K) for (let x = 0; x < w; x += K) if (view.mask[y * w + x]) lm[(y / K | 0) * lw + (x / K | 0)] = 1; return lm; });
+    return { K, lw, lh, m, f: (focal || 0.75) * Math.max(w, h) };
+  }
+  // Retire les « chapeaux » que les silhouettes ne peuvent pas sculpter quand toutes les vues viennent d'en haut :
+  // on enlève des tranches horizontales par le haut et par le bas tant que la couverture des silhouettes ne baisse pas.
+  function trimCaps(views, carved, focal) {
+    const { occ, nx, ny, nz } = carved;
+    let jMin = ny, jMax = -1;
+    for (let i = 0; i < nx; i++) for (let k = 0; k < nz; k++) { const base = (i * nz + k) * ny; for (let j = 0; j < ny; j++) if (occ[base + j]) { if (j < jMin) jMin = j; if (j > jMax) jMax = j; } }
+    if (jMax - jMin < 4) return { top: jMin, bottom: jMax };
+    const low = lowResMasks(views, focal);
+    const full = coverage(views, carved, jMin, jMax, low), keep = full - 0.0012;
+    let lo = jMin, hi = jMax - 2;                       // plus grande coupe par le haut qui garde la couverture
+    while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (coverage(views, carved, mid, jMax, low) >= keep) lo = mid; else hi = mid - 1; }
+    const top = lo;
+    lo = top + 2; hi = jMax;                             // plus grande coupe par le bas
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (coverage(views, carved, top, mid, low) >= keep) hi = mid; else lo = mid + 1; }
+    return { top, bottom: hi, full };
+  }
+  function autoPose(views, opts, progress) {
+    const dirs = opts.direction ? [opts.direction] : [1, -1];
+    const elevs = []; for (let d = 0; d <= 75; d += 7.5) elevs.push(d);
+    const tol = Math.floor(views.length * 0.1);
+    const tries = [];
+    let best = null, done = 0;
+    const total = dirs.length * elevs.length + 4;
+    for (const dir of dirs) for (const ed of elevs) {
+      const o = Object.assign({}, opts, { camera: 'orbit', direction: dir, elevation: ed * Math.PI / 180, sweep: 1, tolerance: tol });
+      const c = carve(views, 40, null, o);
+      const sc = hullScore(views, c);
+      tries.push({ dir, elev: ed, sweep: 1, score: sc });
+      if (!best || sc > best.score) best = { dir, elev: ed, sweep: 1, score: sc };
+      if (progress) progress(++done / total);
+    }
+    for (const sw of [0.8, 0.9, 1.1, 1.2]) {
+      const o = Object.assign({}, opts, { camera: 'orbit', direction: best.dir, elevation: best.elev * Math.PI / 180, sweep: sw, tolerance: tol });
+      const sc = hullScore(views, carve(views, 40, null, o));
+      tries.push({ dir: best.dir, elev: best.elev, sweep: sw, score: sc });
+      if (sc > best.score) best = { dir: best.dir, elev: best.elev, sweep: sw, score: sc };
+      if (progress) progress(++done / total);
+    }
+    return { best, tries };
+  }
+
+  // ---------- Couleurs : projection des photos sur le maillage ----------
+  function colorize(gridPos, normals, indices, views, carved, images) {
+    const nv = gridPos.length / 3;
+    const acc = new Float32Array(nv * 3), wsum = new Float32Array(nv);
+    const s = carved.voxel, x0 = carved.x0, y0 = carved.y0, z0 = carved.z0;
+    const W = new Float32Array(nv * 3);
+    for (let q = 0; q < nv; q++) { W[3 * q] = x0 + gridPos[3 * q] * s; W[3 * q + 1] = y0 + gridPos[3 * q + 1] * s; W[3 * q + 2] = z0 + gridPos[3 * q + 2] * s; }
+    const fwd = [0, 0, 0];
+    const BIN = 3;
+    views.forEach((view, vi) => {
+      const cam = carved.cams[vi], img = images[vi].data, w = view.w, h = view.h, mask = view.mask;
+      const bw = Math.ceil(w / BIN), bh = Math.ceil(h / BIN);
+      const zbuf = new Float32Array(bw * bh).fill(Infinity);
+      const U = new Float32Array(nv), V = new Float32Array(nv), D = new Float32Array(nv);
+      for (let q = 0; q < nv; q++) {
+        const p = cam.project(W[3 * q], W[3 * q + 1], W[3 * q + 2]);
+        U[q] = p[0]; V[q] = p[1]; D[q] = p[2];
+        const bu = Math.floor(p[0] / BIN), bv = Math.floor(p[1] / BIN);
+        if (bu < 0 || bv < 0 || bu >= bw || bv >= bh || p[2] <= 0) continue;
+        if (p[2] < zbuf[bv * bw + bu]) zbuf[bv * bw + bu] = p[2];
+      }
+      const tol = 2.5 * s;
+      for (let q = 0; q < nv; q++) {
+        const u = U[q], v = V[q];
+        if (D[q] <= 0 || u < 2 || v < 2 || u >= w - 3 || v >= h - 3) continue;
+        const bu = Math.floor(u / BIN), bv = Math.floor(v / BIN);
+        let zmin = Infinity;
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const yy = bv + dy, xx = bu + dx; if (yy >= 0 && xx >= 0 && yy < bh && xx < bw) zmin = Math.min(zmin, zbuf[yy * bw + xx]); }
+        if (D[q] > zmin + tol) continue;                       // caché par une autre partie
+        cam.forward(W[3 * q], W[3 * q + 1], W[3 * q + 2], fwd);
+        const facing = -(normals[3 * q] * fwd[0] + normals[3 * q + 1] * fwd[1] + normals[3 * q + 2] * fwd[2]);
+        if (facing <= 0.15) continue;
+        const iu = Math.round(u), iv = Math.round(v);
+        let inside = true;                                        // loin du bord de la silhouette
+        for (let dy = -2; dy <= 2 && inside; dy += 2) for (let dx = -2; dx <= 2; dx += 2) if (!mask[(iv + dy) * w + iu + dx]) { inside = false; break; }
+        if (!inside) continue;
+        const fx = u - 0.5, fy = v - 0.5, xa = Math.floor(fx), ya = Math.floor(fy), tx = fx - xa, ty = fy - ya;
+        const o00 = (ya * w + xa) * 4, o01 = o00 + 4, o10 = o00 + 4 * w, o11 = o10 + 4;
+        const f2 = facing * facing, wt = f2 * f2 * f2;   // la vue la plus en face domine : motifs plus nets
+        for (let c = 0; c < 3; c++) {
+          const val = (img[o00 + c] * (1 - tx) + img[o01 + c] * tx) * (1 - ty) + (img[o10 + c] * (1 - tx) + img[o11 + c] * tx) * ty;
+          acc[3 * q + c] += wt * val;
+        }
+        wsum[q] += wt;
+      }
+    });
+    const col = new Float32Array(nv * 3); const known = new Uint8Array(nv);
+    for (let q = 0; q < nv; q++) if (wsum[q] > 0) { known[q] = 1; for (let c = 0; c < 3; c++) col[3 * q + c] = acc[3 * q + c] / wsum[q]; }
+    // diffusion vers les sommets jamais vus
+    const adj = adjacency(indices, nv);
+    for (let it = 0; it < 60; it++) {
+      let changed = 0;
+      for (let q = 0; q < nv; q++) {
+        if (known[q]) continue;
+        let r = 0, g = 0, b = 0, m = 0;
+        for (let e = adj.start[q]; e < adj.start[q + 1]; e++) { const t = adj.list[e]; if (known[t]) { r += col[3 * t]; g += col[3 * t + 1]; b += col[3 * t + 2]; m++; } }
+        if (m) { col[3 * q] = r / m; col[3 * q + 1] = g / m; col[3 * q + 2] = b / m; known[q] = 2; changed++; }
+      }
+      for (let q = 0; q < nv; q++) if (known[q] === 2) known[q] = 1;
+      if (!changed) break;
+    }
+    const out = new Uint8Array(nv * 3);
+    for (let q = 0; q < nv; q++) for (let c = 0; c < 3; c++) out[3 * q + c] = known[q] ? Math.max(0, Math.min(255, Math.round(col[3 * q + c]))) : 160;
+    return out;
+  }
+  function adjacency(indices, nv) {
+    const deg = new Int32Array(nv);
+    for (let t = 0; t < indices.length; t += 3) { deg[indices[t]] += 2; deg[indices[t + 1]] += 2; deg[indices[t + 2]] += 2; }
+    const start = new Int32Array(nv + 1);
+    for (let i = 0; i < nv; i++) start[i + 1] = start[i] + deg[i];
+    const list = new Int32Array(start[nv]); const fill = new Int32Array(nv);
+    for (let t = 0; t < indices.length; t += 3) {
+      const a = indices[t], b = indices[t + 1], c = indices[t + 2];
+      list[start[a] + fill[a]++] = b; list[start[a] + fill[a]++] = c;
+      list[start[b] + fill[b]++] = a; list[start[b] + fill[b]++] = c;
+      list[start[c] + fill[c]++] = a; list[start[c] + fill[c]++] = b;
+    }
+    return { start, list };
+  }
+
+  // Flou boîte 3x3x3 séparable -> champ scalaire lisse (0..1), bords forcés à 0
+  function smoothField(occ, nx, ny, nz) {
+    const a = new Float32Array(occ.length), b = new Float32Array(occ.length);
+    for (let p = 0; p < occ.length; p++) a[p] = occ[p];
+    const idx = (i, j, k) => (i * nz + k) * ny + j;
+    // le long de j
+    for (let i = 0; i < nx; i++) for (let k = 0; k < nz; k++) {
+      const base = (i * nz + k) * ny;
+      for (let j = 0; j < ny; j++) {
+        const s = a[base + j] + (j > 0 ? a[base + j - 1] : 0) + (j < ny - 1 ? a[base + j + 1] : 0);
+        b[base + j] = s / 3;
+      }
+    }
+    // le long de k
+    for (let i = 0; i < nx; i++) for (let j = 0; j < ny; j++) for (let k = 0; k < nz; k++) {
+      const s = b[idx(i, j, k)] + (k > 0 ? b[idx(i, j, k - 1)] : 0) + (k < nz - 1 ? b[idx(i, j, k + 1)] : 0);
+      a[idx(i, j, k)] = s / 3;
+    }
+    // le long de i
+    for (let j = 0; j < ny; j++) for (let k = 0; k < nz; k++) for (let i = 0; i < nx; i++) {
+      const s = a[idx(i, j, k)] + (i > 0 ? a[idx(i - 1, j, k)] : 0) + (i < nx - 1 ? a[idx(i + 1, j, k)] : 0);
+      b[idx(i, j, k)] = s / 3;
+    }
+    for (let i = 0; i < nx; i++) for (let k = 0; k < nz; k++) {
+      const border = (i === 0 || i === nx - 1 || k === 0 || k === nz - 1);
+      for (let j = 0; j < ny; j++) if (border || j === 0 || j === ny - 1) b[idx(i, j, k)] = 0;
+    }
+    return b;
+  }
+
+  // ---------- Surface nets (maillage d'une iso-surface) ----------
+  function surfaceNets(field, nx, ny, nz, iso) {
+    const idx = (i, j, k) => (i * nz + k) * ny + j;
+    const cx = nx - 1, cy = ny - 1, cz = nz - 1;
+    const cellIdx = (i, j, k) => (i * cz + k) * cy + j;
+    const cellVert = new Int32Array(cx * cy * cz).fill(-1);
+    const pos = [];
+    const quads = [];
+    const v = new Float32Array(8);
+    const EDGES = [[0,1],[2,3],[4,5],[6,7],[0,2],[1,3],[4,6],[5,7],[0,4],[1,5],[2,6],[3,7]];
+    for (let i = 0; i < cx; i++) for (let k = 0; k < cz; k++) for (let j = 0; j < cy; j++) {
+      let m = 0;
+      for (let c = 0; c < 8; c++) {
+        const val = field[idx(i + (c & 1), j + ((c >> 1) & 1), k + ((c >> 2) & 1))] - iso;
+        v[c] = val; if (val > 0) m |= 1 << c;
+      }
+      if (m === 0 || m === 255) continue;
+      let sx = 0, sy = 0, sz = 0, cnt = 0;
+      for (let e = 0; e < 12; e++) {
+        const a = EDGES[e][0], b = EDGES[e][1];
+        if ((v[a] > 0) === (v[b] > 0)) continue;
+        const t = v[a] / (v[a] - v[b]);
+        const ax = a & 1, ay = (a >> 1) & 1, az = (a >> 2) & 1;
+        const bx = b & 1, by = (b >> 1) & 1, bz = (b >> 2) & 1;
+        sx += ax + (bx - ax) * t; sy += ay + (by - ay) * t; sz += az + (bz - az) * t;
+        cnt++;
+      }
+      const vi = pos.length / 3;
+      pos.push(i + sx / cnt, j + sy / cnt, k + sz / cnt);
+      cellVert[cellIdx(i, j, k)] = vi;
+      const inside0 = v[0] > 0;
+      // arête x (coins 0-1) : cellules (i,j,k),(i,j-1,k),(i,j-1,k-1),(i,j,k-1)
+      if ((v[1] > 0) !== inside0 && j > 0 && k > 0)
+        quads.push([cellIdx(i, j, k), cellIdx(i, j - 1, k), cellIdx(i, j - 1, k - 1), cellIdx(i, j, k - 1), inside0 ? 1 : 0]);
+      // arête y (coins 0-2) : cellules (i,j,k),(i,j,k-1),(i-1,j,k-1),(i-1,j,k)
+      if ((v[2] > 0) !== inside0 && i > 0 && k > 0)
+        quads.push([cellIdx(i, j, k), cellIdx(i, j, k - 1), cellIdx(i - 1, j, k - 1), cellIdx(i - 1, j, k), inside0 ? 1 : 0]);
+      // arête z (coins 0-4) : cellules (i,j,k),(i-1,j,k),(i-1,j-1,k),(i,j-1,k)
+      if ((v[4] > 0) !== inside0 && i > 0 && j > 0)
+        quads.push([cellIdx(i, j, k), cellIdx(i - 1, j, k), cellIdx(i - 1, j - 1, k), cellIdx(i, j - 1, k), inside0 ? 1 : 0]);
+    }
+    const tris = [];
+    for (const q of quads) {
+      let a = cellVert[q[0]], b = cellVert[q[1]], c = cellVert[q[2]], d = cellVert[q[3]];
+      if (a < 0 || b < 0 || c < 0 || d < 0) continue;
+      if (!q[4]) { const t = b; b = d; d = t; }
+      // couper suivant la diagonale la plus courte
+      const dAC = dist2(pos, a, c), dBD = dist2(pos, b, d);
+      if (dAC <= dBD) tris.push(a, b, c, a, c, d); else tris.push(a, b, d, b, c, d);
+    }
+    return { positions: new Float32Array(pos), indices: new Uint32Array(tris) };
+  }
+  function dist2(p, a, b) {
+    const dx = p[3 * a] - p[3 * b], dy = p[3 * a + 1] - p[3 * b + 1], dz = p[3 * a + 2] - p[3 * b + 2];
+    return dx * dx + dy * dy + dz * dz;
+  }
+
+  // ---------- Lissage de Taubin (sans rétrécissement) ----------
+  function taubinSmooth(positions, indices, iterations) {
+    const nv = positions.length / 3;
+    if (!iterations || nv === 0) return positions;
+    const deg = new Int32Array(nv);
+    for (let t = 0; t < indices.length; t += 3) {
+      const a = indices[t], b = indices[t + 1], c = indices[t + 2];
+      deg[a] += 2; deg[b] += 2; deg[c] += 2;
+    }
+    const start = new Int32Array(nv + 1);
+    for (let i = 0; i < nv; i++) start[i + 1] = start[i] + deg[i];
+    const adj = new Int32Array(start[nv]);
+    const fill = new Int32Array(nv);
+    for (let t = 0; t < indices.length; t += 3) {
+      const a = indices[t], b = indices[t + 1], c = indices[t + 2];
+      adj[start[a] + fill[a]++] = b; adj[start[a] + fill[a]++] = c;
+      adj[start[b] + fill[b]++] = a; adj[start[b] + fill[b]++] = c;
+      adj[start[c] + fill[c]++] = a; adj[start[c] + fill[c]++] = b;
+    }
+    let p = positions, q = new Float32Array(positions.length);
+    const pass = (lambda) => {
+      for (let i = 0; i < nv; i++) {
+        const s = start[i], e = start[i + 1];
+        if (e === s) { q[3 * i] = p[3 * i]; q[3 * i + 1] = p[3 * i + 1]; q[3 * i + 2] = p[3 * i + 2]; continue; }
+        let mx = 0, my = 0, mz = 0;
+        for (let n = s; n < e; n++) { const o = adj[n] * 3; mx += p[o]; my += p[o + 1]; mz += p[o + 2]; }
+        const inv = 1 / (e - s);
+        mx *= inv; my *= inv; mz *= inv;
+        q[3 * i] = p[3 * i] + lambda * (mx - p[3 * i]);
+        q[3 * i + 1] = p[3 * i + 1] + lambda * (my - p[3 * i + 1]);
+        q[3 * i + 2] = p[3 * i + 2] + lambda * (mz - p[3 * i + 2]);
+      }
+      const t = p; p = q; q = t;
+    };
+    for (let it = 0; it < iterations; it++) { pass(0.5); pass(-0.53); }
+    return p;
+  }
+
+  // ---------- Géométrie : repère impression (Z vers le haut), échelle mm ----------
+  function finalizeMesh(positions, indices, voxel, ny, heightMm, mirror, measure, widthMm) {
+    const nv = positions.length / 3;
+    const out = new Float32Array(positions.length);
+    let minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9, minZ = 1e9, maxZ = -1e9;
+    for (let i = 0; i < nv; i++) {
+      const x = positions[3 * i], j = positions[3 * i + 1], k = positions[3 * i + 2];
+      const X = (mirror ? -1 : 1) * x, Y = k, Z = (ny - 1) - j; // image vers le bas -> Z vers le haut
+      out[3 * i] = X; out[3 * i + 1] = Y; out[3 * i + 2] = Z;
+      if (X < minX) minX = X; if (X > maxX) maxX = X; if (Y < minY) minY = Y; if (Y > maxY) maxY = Y; if (Z < minZ) minZ = Z; if (Z > maxZ) maxZ = Z;
+    }
+    const ref = measure === 'width' ? Math.max(maxX - minX, maxY - minY) : (maxZ - minZ);
+    const scale = heightMm > 0 ? heightMm / Math.max(1e-6, ref) : 1;
+    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+    for (let i = 0; i < nv; i++) {
+      out[3 * i] = (out[3 * i] - cx) * scale;
+      out[3 * i + 1] = (out[3 * i + 1] - cy) * scale;
+      out[3 * i + 2] = (out[3 * i + 2] - minZ) * scale;
+    }
+    let dimsXY = [(maxX - minX) * scale, (maxY - minY) * scale];
+    if (widthMm > 0 && measure !== 'width') {
+      // deux mesures connues : petite correction horizontale pour retomber exactement sur la largeur donnée
+      const fx = Math.max(0.8, Math.min(1.25, widthMm / Math.max(1e-6, Math.max(dimsXY[0], dimsXY[1]))));
+      for (let i = 0; i < nv; i++) { out[3 * i] *= fx; out[3 * i + 1] *= fx; }
+      dimsXY = [dimsXY[0] * fx, dimsXY[1] * fx];
+    }
+    let idx = indices;
+    if (mirror) { // le miroir inverse l'orientation des faces
+      idx = new Uint32Array(indices.length);
+      for (let t = 0; t < indices.length; t += 3) { idx[t] = indices[t]; idx[t + 1] = indices[t + 2]; idx[t + 2] = indices[t + 1]; }
+    }
+    const dims = [dimsXY[0], dimsXY[1], (maxZ - minZ) * scale];
+    return { positions: out, indices: idx, dims, scale };
+  }
+
+  function meshVolume(positions, indices) { // mm^3, signé (positif si faces vers l'extérieur)
+    let vol = 0;
+    for (let t = 0; t < indices.length; t += 3) {
+      const a = indices[t] * 3, b = indices[t + 1] * 3, c = indices[t + 2] * 3;
+      const ax = positions[a], ay = positions[a + 1], az = positions[a + 2];
+      const bx = positions[b], by = positions[b + 1], bz = positions[b + 2];
+      const cx = positions[c], cy = positions[c + 1], cz = positions[c + 2];
+      vol += ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx);
+    }
+    return vol / 6;
+  }
+
+  function vertexNormals(positions, indices) {
+    const n = new Float32Array(positions.length);
+    for (let t = 0; t < indices.length; t += 3) {
+      const a = indices[t] * 3, b = indices[t + 1] * 3, c = indices[t + 2] * 3;
+      const ux = positions[b] - positions[a], uy = positions[b + 1] - positions[a + 1], uz = positions[b + 2] - positions[a + 2];
+      const vx = positions[c] - positions[a], vy = positions[c + 1] - positions[a + 1], vz = positions[c + 2] - positions[a + 2];
+      const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      n[a] += nx; n[a + 1] += ny; n[a + 2] += nz; n[b] += nx; n[b + 1] += ny; n[b + 2] += nz; n[c] += nx; n[c + 1] += ny; n[c + 2] += nz;
+    }
+    for (let i = 0; i < n.length; i += 3) {
+      const l = Math.hypot(n[i], n[i + 1], n[i + 2]) || 1;
+      n[i] /= l; n[i + 1] /= l; n[i + 2] /= l;
+    }
+    return n;
+  }
+
+  // ---------- STL binaire ----------
+  function buildSTL(positions, indices, name) {
+    const nt = indices.length / 3;
+    const buf = new ArrayBuffer(84 + nt * 50);
+    const dv = new DataView(buf);
+    const header = ('Photo vers STL - ' + (name || 'objet')).slice(0, 79);
+    for (let i = 0; i < header.length; i++) dv.setUint8(i, header.charCodeAt(i) & 0x7f);
+    dv.setUint32(80, nt, true);
+    let o = 84;
+    for (let t = 0; t < indices.length; t += 3) {
+      const a = indices[t] * 3, b = indices[t + 1] * 3, c = indices[t + 2] * 3;
+      const ux = positions[b] - positions[a], uy = positions[b + 1] - positions[a + 1], uz = positions[b + 2] - positions[a + 2];
+      const vx = positions[c] - positions[a], vy = positions[c + 1] - positions[a + 1], vz = positions[c + 2] - positions[a + 2];
+      let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      const l = Math.hypot(nx, ny, nz) || 1; nx /= l; ny /= l; nz /= l;
+      dv.setFloat32(o, nx, true); dv.setFloat32(o + 4, ny, true); dv.setFloat32(o + 8, nz, true); o += 12;
+      for (const q of [a, b, c]) {
+        dv.setFloat32(o, positions[q], true); dv.setFloat32(o + 4, positions[q + 1], true); dv.setFloat32(o + 8, positions[q + 2], true); o += 12;
+      }
+      dv.setUint16(o, 0, true); o += 2;
+    }
+    return buf;
+  }
+
+  // ---------- Modèle couleur : PLY binaire et OBJ avec couleurs de sommets ----------
+  function buildPLY(positions, indices, colors) {
+    const nv = positions.length / 3, nt = indices.length / 3;
+    const header = 'ply\nformat binary_little_endian 1.0\ncomment Photo vers STL\nelement vertex ' + nv + '\nproperty float x\nproperty float y\nproperty float z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\nelement face ' + nt + '\nproperty list uchar int vertex_indices\nend_header\n';
+    const hb = new TextEncoder().encode(header);
+    const buf = new ArrayBuffer(hb.length + nv * 15 + nt * 13); const dv = new DataView(buf); new Uint8Array(buf).set(hb, 0);
+    let o = hb.length;
+    for (let i = 0; i < nv; i++) {
+      dv.setFloat32(o, positions[3 * i], true); dv.setFloat32(o + 4, positions[3 * i + 1], true); dv.setFloat32(o + 8, positions[3 * i + 2], true);
+      dv.setUint8(o + 12, colors ? colors[3 * i] : 200); dv.setUint8(o + 13, colors ? colors[3 * i + 1] : 200); dv.setUint8(o + 14, colors ? colors[3 * i + 2] : 200); o += 15;
+    }
+    for (let t = 0; t < indices.length; t += 3) { dv.setUint8(o, 3); dv.setInt32(o + 1, indices[t], true); dv.setInt32(o + 5, indices[t + 1], true); dv.setInt32(o + 9, indices[t + 2], true); o += 13; }
+    return buf;
+  }
+  function buildOBJ(positions, indices, colors, name) {
+    const nv = positions.length / 3; const parts = ['# Photo vers STL - ' + (name || 'objet') + '\n# couleurs par sommet : v x y z r g b (0..1)\no ' + (name || 'objet') + '\n'];
+    let chunk = [];
+    for (let i = 0; i < nv; i++) {
+      const r = colors ? colors[3 * i] / 255 : 0.8, g = colors ? colors[3 * i + 1] / 255 : 0.8, b = colors ? colors[3 * i + 2] / 255 : 0.8;
+      chunk.push('v ' + positions[3 * i].toFixed(3) + ' ' + positions[3 * i + 1].toFixed(3) + ' ' + positions[3 * i + 2].toFixed(3) + ' ' + r.toFixed(3) + ' ' + g.toFixed(3) + ' ' + b.toFixed(3));
+      if (chunk.length >= 5000) { parts.push(chunk.join('\n') + '\n'); chunk = []; }
+    }
+    for (let t = 0; t < indices.length; t += 3) {
+      chunk.push('f ' + (indices[t] + 1) + ' ' + (indices[t + 1] + 1) + ' ' + (indices[t + 2] + 1));
+      if (chunk.length >= 5000) { parts.push(chunk.join('\n') + '\n'); chunk = []; }
+    }
+    parts.push(chunk.join('\n') + '\n');
+    return new TextEncoder().encode(parts.join(''));
+  }
+
+  // ---------- ZIP (sans compression) pour l'export dans l'artifact ----------
+  const CRC_TABLE = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+  function crc32(bytes) { let c = 0xFFFFFFFF; for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+  function buildZip(fileName, data) { return buildZipMulti([{ name: fileName, data }]); }
+  function buildZipMulti(files) {
+    const d = new Date();
+    const dosTime = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1);
+    const dosDate = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+    const locals = [], centrals = []; let offset = 0;
+    for (const f of files) {
+      const bytes = f.data instanceof Uint8Array ? f.data : new Uint8Array(f.data);
+      const nameBytes = new TextEncoder().encode(f.name); const crc = crc32(bytes);
+      const local = new Uint8Array(30 + nameBytes.length); let v = new DataView(local.buffer);
+      v.setUint32(0, 0x04034b50, true); v.setUint16(4, 20, true); v.setUint16(6, 0x0800, true); v.setUint16(8, 0, true);
+      v.setUint16(10, dosTime, true); v.setUint16(12, dosDate, true); v.setUint32(14, crc, true);
+      v.setUint32(18, bytes.length, true); v.setUint32(22, bytes.length, true); v.setUint16(26, nameBytes.length, true); v.setUint16(28, 0, true);
+      local.set(nameBytes, 30);
+      const central = new Uint8Array(46 + nameBytes.length); v = new DataView(central.buffer);
+      v.setUint32(0, 0x02014b50, true); v.setUint16(4, 20, true); v.setUint16(6, 20, true); v.setUint16(8, 0x0800, true); v.setUint16(10, 0, true);
+      v.setUint16(12, dosTime, true); v.setUint16(14, dosDate, true); v.setUint32(16, crc, true);
+      v.setUint32(20, bytes.length, true); v.setUint32(24, bytes.length, true); v.setUint16(28, nameBytes.length, true);
+      v.setUint16(30, 0, true); v.setUint16(32, 0, true); v.setUint16(34, 0, true); v.setUint16(36, 0, true); v.setUint32(38, 0, true); v.setUint32(42, offset, true);
+      central.set(nameBytes, 46);
+      locals.push(local, bytes); centrals.push(central); offset += local.length + bytes.length;
+    }
+    const centralSize = centrals.reduce((a, c) => a + c.length, 0);
+    const end = new Uint8Array(22); const v = new DataView(end.buffer);
+    v.setUint32(0, 0x06054b50, true); v.setUint16(8, files.length, true); v.setUint16(10, files.length, true);
+    v.setUint32(12, centralSize, true); v.setUint32(16, offset, true);
+    const out = new Uint8Array(offset + centralSize + 22); let o = 0;
+    for (const part of locals.concat(centrals, [end])) { out.set(part, o); o += part.length; }
+    return out;
+  }
+
+
+  // ---------- Détection par réseau de neurones (U²-Net léger via ONNX Runtime Web) ----------
+  const ML = { session: null, ready: false, error: null, size: 320, norm: 'imagenet', name: '' };
+  function b64decode(txt) {
+    const bin = atob(txt.replace(/\s+/g, '')); const u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    return u8;
+  }
+  // cfg : { ortUrl | ortSource, wasmPaths | wasmBuffers, model: { name, size, norm, urls: [...], encoding: 'base64'|'binary' } | modelBuffer }
+  async function mlInit(cfg) {
+    const want = cfg.model ? cfg.model.name : 'embarqué';
+    if (ML.ready && ML.name === want) return { ok: true };
+    try {
+      if (!self.ort) {
+        if (cfg.ortSource) importScripts(URL.createObjectURL(new Blob([cfg.ortSource], { type: 'text/javascript' })));
+        else importScripts(cfg.ortUrl);
+      }
+      const ort = self.ort;
+      ort.env.wasm.numThreads = 1;
+      ort.env.wasm.proxy = false;
+      if (cfg.wasmBuffers) {
+        const paths = {};
+        for (const name in cfg.wasmBuffers) paths[name] = URL.createObjectURL(new Blob([cfg.wasmBuffers[name]], { type: 'application/wasm' }));
+        ort.env.wasm.wasmPaths = paths;
+      } else if (cfg.wasmPaths) ort.env.wasm.wasmPaths = cfg.wasmPaths;
+      let buf = cfg.modelBuffer;
+      if (!buf) {
+        const m = cfg.model; const parts = []; let total = 0;
+        for (let i = 0; i < m.urls.length; i++) {
+          const resp = await fetch(m.urls[i]);
+          if (!resp.ok) throw new Error('modèle introuvable (' + resp.status + ')');
+          const part = m.encoding === 'base64' ? b64decode(await resp.text()) : new Uint8Array(await resp.arrayBuffer());
+          parts.push(part); total += part.length;
+          self.postMessage({ type: 'progress', id: cfg.msgId, stage: 'download', f: (i + 1) / m.urls.length });
+        }
+        const all = new Uint8Array(total); let o = 0;
+        for (const p of parts) { all.set(p, o); o += p.length; }
+        buf = all.buffer;
+      }
+      if (ML.session && ML.session.release) { try { await ML.session.release(); } catch (e) {} }
+      ML.ready = false; ML.session = null;
+      ML.session = await ort.InferenceSession.create(buf, { executionProviders: ['wasm'], graphOptimizationLevel: 'all' });
+      ML.size = (cfg.model && cfg.model.size) || 320;
+      ML.norm = (cfg.model && cfg.model.norm) || 'imagenet';
+      ML.name = want; ML.ready = true; ML.error = null;
+      return { ok: true };
+    } catch (e) { ML.error = e && e.message ? e.message : String(e); return { ok: false, error: ML.error }; }
+  }
+  // rgba : image SxS ; renvoie la carte de saillance SxS (0..1)
+  async function mlPredict(rgba) {
+    const S = ML.size, n = S * S;
+    const data = new Float32Array(3 * n);
+    if (ML.norm === 'half') {
+      for (let p = 0, o = 0; p < n; p++, o += 4) { data[p] = rgba[o] / 255 - 0.5; data[n + p] = rgba[o + 1] / 255 - 0.5; data[2 * n + p] = rgba[o + 2] / 255 - 0.5; }
+    } else {
+      const mean = [0.485, 0.456, 0.406], std = [0.229, 0.224, 0.225];
+      for (let p = 0, o = 0; p < n; p++, o += 4) {
+        data[p] = (rgba[o] / 255 - mean[0]) / std[0];
+        data[n + p] = (rgba[o + 1] / 255 - mean[1]) / std[1];
+        data[2 * n + p] = (rgba[o + 2] / 255 - mean[2]) / std[2];
+      }
+    }
+    const ort = self.ort;
+    const input = new ort.Tensor('float32', data, [1, 3, S, S]);
+    const feeds = {}; feeds[ML.session.inputNames[0]] = input;
+    const out = await ML.session.run(feeds);
+    const pred = out[ML.session.outputNames[0]].data;
+    let mn = Infinity, mx = -Infinity;
+    for (let i = 0; i < n; i++) { if (pred[i] < mn) mn = pred[i]; if (pred[i] > mx) mx = pred[i]; }
+    const sal = new Float32Array(n);
+    const range = mx - mn || 1;
+    for (let i = 0; i < n; i++) sal[i] = (pred[i] - mn) / range;
+    return sal;
+  }
+  // rééchantillonne une zone [x0,y0,x1,y1] (pixels) de l'image en SxS (moyenne 2x2 + bilinéaire)
+  function resampleRGBA(rgba, w, h, rect, S) {
+    const out = new Uint8ClampedArray(S * S * 4);
+    const rw = rect[2] - rect[0], rh = rect[3] - rect[1];
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+      let r = 0, g = 0, b = 0;
+      for (let sy = 0; sy < 2; sy++) for (let sx = 0; sx < 2; sx++) {
+        const fx = rect[0] + (x + 0.25 + 0.5 * sx) * rw / S - 0.5, fy = rect[1] + (y + 0.25 + 0.5 * sy) * rh / S - 0.5;
+        const x0 = Math.min(w - 1, Math.max(0, Math.floor(fx))), y0 = Math.min(h - 1, Math.max(0, Math.floor(fy)));
+        const x1 = Math.min(w - 1, x0 + 1), y1 = Math.min(h - 1, y0 + 1);
+        const tx = Math.min(1, Math.max(0, fx - x0)), ty = Math.min(1, Math.max(0, fy - y0));
+        const o00 = (y0 * w + x0) * 4, o01 = (y0 * w + x1) * 4, o10 = (y1 * w + x0) * 4, o11 = (y1 * w + x1) * 4;
+        const w00 = (1 - tx) * (1 - ty), w01 = tx * (1 - ty), w10 = (1 - tx) * ty, w11 = tx * ty;
+        r += rgba[o00] * w00 + rgba[o01] * w01 + rgba[o10] * w10 + rgba[o11] * w11;
+        g += rgba[o00 + 1] * w00 + rgba[o01 + 1] * w01 + rgba[o10 + 1] * w10 + rgba[o11 + 1] * w11;
+        b += rgba[o00 + 2] * w00 + rgba[o01 + 2] * w01 + rgba[o10 + 2] * w10 + rgba[o11 + 2] * w11;
+      }
+      const o = (y * S + x) * 4; out[o] = r / 4; out[o + 1] = g / 4; out[o + 2] = b / 4; out[o + 3] = 255;
+    }
+    return out;
+  }
+  // carte de saillance SxS couvrant rect -> masque binaire w x h (bilinéaire + seuil + nettoyage)
+  function maskFromSaliency(sal, S, w, h, level, rect) {
+    rect = rect || [0, 0, w, h];
+    const mask = new Uint8Array(w * h);
+    const rw = rect[2] - rect[0], rh = rect[3] - rect[1];
+    const ys = Math.max(0, rect[1]), ye = Math.min(h, rect[3]), xs = Math.max(0, rect[0]), xe = Math.min(w, rect[2]);
+    for (let y = ys; y < ye; y++) {
+      const fy = (y - rect[1] + 0.5) * S / rh - 0.5; const y0 = Math.min(S - 1, Math.max(0, Math.floor(fy))), y1 = Math.min(S - 1, y0 + 1), ty = Math.min(1, Math.max(0, fy - y0));
+      for (let x = xs; x < xe; x++) {
+        const fx = (x - rect[0] + 0.5) * S / rw - 0.5; const x0 = Math.min(S - 1, Math.max(0, Math.floor(fx))), x1 = Math.min(S - 1, x0 + 1), tx = Math.min(1, Math.max(0, fx - x0));
+        const v = (sal[y0 * S + x0] * (1 - tx) + sal[y0 * S + x1] * tx) * (1 - ty) + (sal[y1 * S + x0] * (1 - tx) + sal[y1 * S + x1] * tx) * ty;
+        mask[y * w + x] = v > level ? 1 : 0;
+      }
+    }
+    morphOpenClose(mask, w, h);
+    keepLargestComponent(mask, w, h);
+    fillHoles(mask, w, h);
+    return mask;
+  }
+  // deux passes : image entière -> boîte de l'objet -> seconde passe sur la boîte (meilleure résolution)
+  async function mlSegmentImage(rgba, w, h) {
+    const S = ML.size;
+    const full = [0, 0, w, h];
+    const sal1 = await mlPredict(resampleRGBA(rgba, w, h, full, S));
+    const m1 = maskFromSaliency(sal1, S, w, h, 0.5, full);
+    const st = maskStats(m1, w, h);
+    if (st.area < w * h * 0.002) return { rect: full, sal: sal1 };
+    const bw = st.right - st.left + 1, bh = st.bottom - st.top + 1;
+    const mx = Math.max(8, bw * 0.15), my = Math.max(8, bh * 0.1);
+    const rect = [Math.max(0, Math.floor(st.left - mx)), Math.max(0, Math.floor(st.top - my)), Math.min(w, Math.ceil(st.right + 1 + mx)), Math.min(h, Math.ceil(st.bottom + 1 + my))];
+    if ((rect[2] - rect[0]) * (rect[3] - rect[1]) > 0.8 * w * h) return { rect: full, sal: sal1 };
+    const sal2 = await mlPredict(resampleRGBA(rgba, w, h, rect, S));
+    return { rect, sal: sal2 };
+  }
+  // ---------- Chaîne « caméra en orbite » : rejet, recalage, sculpture, coupe des chapeaux ----------
+  function orbitPipeline(usable0, params, elevDeg, res, fast, progress) {
+    let usable = usable0.map(v => Object.assign({}, v, { distScale: 1, aimShift: [0, 0] }));
+    const copts = { camera: 'orbit', focal: params.focal, direction: params.direction || 1, elevation: elevDeg * Math.PI / 180, sweep: 1, tolerance: 0 };
+    let rejected = [];
+    if (usable.length >= 8) {
+      // images incohérentes avec les autres (détourage raté) : on les écarte puis on sculpte strictement
+      const rough = carve(usable, 48, null, Object.assign({}, copts, { tolerance: 1 }));
+      const pv = []; hullScore(usable, rough, pv);
+      const ex = pv.map(x => x.excess), sorted = ex.slice().sort((a, b) => a - b), med = sorted[sorted.length >> 1];
+      const lim = Math.max(0.15, med + 0.12);
+      const keepIdx = []; ex.forEach((v, i) => { if (v <= lim) keepIdx.push(i); else rejected.push(usable[i].src); });
+      if (keepIdx.length >= Math.max(6, usable.length * 0.6)) usable = keepIdx.map(i => usable[i]); else rejected = [];
+    }
+    // recalage de chaque vue : distance et cadrage ajustés pour que l'ébauche se projette comme la silhouette
+    const f = (params.focal || 0.75) * Math.max(usable[0].w, usable[0].h);
+    for (let it = 0; it < (fast ? 2 : 4); it++) {
+      const rough = carve(usable, 48, null, Object.assign({}, copts, { tolerance: usable.length >= 8 ? 1 : 0 }));
+      const { occ, nx, ny, nz, voxel: s, x0, y0, z0, cams } = rough;
+      const pts = [];
+      for (let i = 0; i < nx; i++) for (let k = 0; k < nz; k++) { const base = (i * nz + k) * ny; for (let j = 0; j < ny; j++) if (occ[base + j]) pts.push(x0 + i * s, y0 + j * s, z0 + k * s); }
+      if (pts.length < 30) break;
+      let logSum = 0; const ratios = [];
+      usable.forEach((v, vi) => {
+        let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
+        for (let q = 0; q < pts.length; q += 3) {
+          const p = cams[vi].project(pts[q], pts[q + 1], pts[q + 2]); if (p[2] <= 0) continue;
+          const r = 0.5 * f * s / p[2];
+          if (p[0] - r < u0) u0 = p[0] - r; if (p[0] + r > u1) u1 = p[0] + r; if (p[1] - r < v0) v0 = p[1] - r; if (p[1] + r > v1) v1 = p[1] + r;
+        }
+        const st = v.stats;
+        const projDiag = Math.hypot(u1 - u0, v1 - v0), maskDiag = Math.hypot(st.right - st.left + 1, st.bottom - st.top + 1);
+        const ratio = st.touchesBorder ? 1 : Math.max(0.85, Math.min(1.18, projDiag / maskDiag));
+        ratios.push(ratio); logSum += Math.log(ratio);
+        if (!st.touchesBorder) {
+          v.aimShift[0] += 0.7 * (((st.left + st.right) / 2) - (u0 + u1) / 2);
+          v.aimShift[1] += 0.7 * (((st.top + st.bottom) / 2) - (v0 + v1) / 2);
+        }
+      });
+      const gm = Math.exp(logSum / Math.max(1, ratios.length));
+      usable.forEach((v, vi) => { v.distScale *= Math.pow(ratios[vi] / gm, 0.8); });
+    }
+    const c = carve(usable, res, progress || null, copts);
+    if (params.trimCaps !== false) {
+      // coupes déterminées sur une version grossière, appliquées à la version fine (en coordonnées monde)
+      const coarse = res <= 64 ? c : carve(usable, 64, null, copts);
+      const cut = trimCaps(usable, coarse, params.focal);
+      const yTop = coarse.y0 + (cut.top - 0.5) * coarse.voxel, yBot = coarse.y0 + (cut.bottom + 0.5) * coarse.voxel;
+      for (let j = 0; j < c.ny; j++) { const Y = c.y0 + j * c.voxel; if (Y >= yTop && Y <= yBot) continue;
+        for (let i = 0; i < c.nx; i++) for (let k = 0; k < c.nz; k++) c.occ[(i * c.nz + k) * c.ny + j] = 0; }
+    }
+    // proportions : plus grande largeur horizontale / hauteur
+    let jMin = c.ny, jMax = -1, iMin = c.nx, iMax = -1, kMin = c.nz, kMax = -1;
+    for (let i = 0; i < c.nx; i++) for (let k = 0; k < c.nz; k++) { const base = (i * c.nz + k) * c.ny; for (let j = 0; j < c.ny; j++) if (c.occ[base + j]) { if (j < jMin) jMin = j; if (j > jMax) jMax = j; if (i < iMin) iMin = i; if (i > iMax) iMax = i; if (k < kMin) kMin = k; if (k > kMax) kMax = k; } }
+    const ratio = jMax >= jMin ? Math.max(iMax - iMin + 1, kMax - kMin + 1) / (jMax - jMin + 1) : 0;
+    return { carved: c, usable, rejected, ratio };
+  }
+
+  // ---------- Pipeline complet ----------
+  function reconstruct(images, params, progress) {
+    const views = images.map((im, i) => {
+      const r = segment(im.data, im.w, im.h, Object.assign({}, params, { ml: im.ml }));
+      if (progress) progress('segment', (i + 1) / images.length);
+      return { mask: r.mask, w: im.w, h: im.h, stats: r.stats, bg: r.bg, angle: (im.angleDeg == null) ? (2 * Math.PI * i / images.length) : im.angleDeg * Math.PI / 180, elev: im.elevDeg == null ? null : im.elevDeg * Math.PI / 180, src: i };
+    });
+    let usable = views.filter(v => v.stats.area > 0);
+    if (usable.length < 3) throw new Error('Aucun objet détecté sur assez de photos. Change le mode de détection ou la sensibilité.');
+    const res = params.resolution || 128;
+    let copts = { handheld: !!params.handheld, direction: params.direction || 1, camera: params.camera, focal: params.focal };
+    let pose = null, rejected = [], c;
+    if (params.camera === 'orbit') {
+      let elev = params.elevationDeg != null && params.elevationDeg >= 0 ? params.elevationDeg : 25;
+      let solved = null;
+      const sensor = usable.every(v => v.elev != null);
+      if (sensor) { elev = usable.reduce((a, v) => a + v.elev, 0) / usable.length * 180 / Math.PI; solved = 'capteur'; }
+      else if (params.targetRatio > 0) {
+        // les deux mesures sont connues : on cherche la plongée qui redonne le bon rapport largeur / hauteur
+        const ratioAt = (e) => orbitPipeline(usable, params, e, 64, false).ratio;
+        const T = params.targetRatio, grid = [0, 10, 20, 30, 40, 50, 60, 70], rs = [];
+        let found = -1;
+        for (let g = 0; g < grid.length; g++) {
+          rs.push(ratioAt(grid[g]));
+          if (progress) progress('pose', 0.7 * (g + 1) / grid.length);
+          if (g > 0 && rs[g - 1] <= T && T <= rs[g]) { found = g; break; }
+        }
+        if (found < 0) elev = T <= rs[0] ? 0 : 70;
+        else {
+          let lo = grid[found - 1], hi = grid[found], rlo = rs[found - 1], rhi = rs[found];
+          for (let st = 0; st < 3; st++) {
+            const mid = (lo + hi) / 2, r = ratioAt(mid);
+            if (r < T) { lo = mid; rlo = r; } else { hi = mid; rhi = r; }
+            if (progress) progress('pose', 0.7 + 0.3 * (st + 1) / 3);
+          }
+          elev = rhi > rlo ? lo + (hi - lo) * (T - rlo) / (rhi - rlo) : (lo + hi) / 2;
+        }
+        solved = Math.round(elev);
+      }
+      const o = orbitPipeline(usable, params, elev, res, false, (f) => progress && progress('carve', f));
+      c = o.carved; rejected = o.rejected; usable = o.usable;
+      pose = { best: { dir: params.direction || 1, elev: Math.round(elev), solved: solved != null, sensor: solved === 'capteur', sweep: 1, ratio: o.ratio } };
+    } else {
+      c = carve(usable, res, (f) => progress && progress('carve', f), copts);
+    }
+    if (params.hollow && params.hollow.wallMm > 0) {
+      // conversion mm -> voxels à partir de la mesure donnée
+      let jMin = c.ny, jMax = -1, iMin = c.nx, iMax = -1, kMin = c.nz, kMax = -1;
+      for (let i = 0; i < c.nx; i++) for (let k = 0; k < c.nz; k++) { const base = (i * c.nz + k) * c.ny; for (let j = 0; j < c.ny; j++) if (c.occ[base + j]) { if (j < jMin) jMin = j; if (j > jMax) jMax = j; if (i < iMin) iMin = i; if (i > iMax) iMax = i; if (k < kMin) kMin = k; if (k > kMax) kMax = k; } }
+      const extent = params.measure === 'width' ? Math.max(iMax - iMin, kMax - kMin) + 1 : (jMax - jMin + 1);
+      const mmPerVox = (params.heightMm > 0 ? params.heightMm : 100) / Math.max(1, extent);
+      const wall = Math.max(2, params.hollow.wallMm / mmPerVox), bottom = Math.max(2, (params.hollow.bottomMm || params.hollow.wallMm) / mmPerVox);
+      hollowOpenTop(c, wall, bottom);
+    }
+    let filled = 0; for (let p = 0; p < c.occ.length; p++) filled += c.occ[p];
+    if (filled < 8) throw new Error('Le volume est vide : les silhouettes ne se recoupent pas. Vérifie les angles des photos et le sens du tour.');
+    let field;
+    if (params.volumeSmooth === false) field = toFloat(c.occ);
+    else {
+      field = smoothField(c.occ, c.nx, c.ny, c.nz);
+      const extra = Math.floor((params.smoothIterations == null ? 2 : params.smoothIterations) / 3);
+      for (let pss = 0; pss < extra; pss++) field = smoothField(field, c.nx, c.ny, c.nz);
+    }
+    if (progress) progress('mesh', 0.2);
+    const mesh = surfaceNets(field, c.nx, c.ny, c.nz, 0.5);
+    if (progress) progress('mesh', 0.5);
+    const smoothed = taubinSmooth(mesh.positions, mesh.indices, params.smoothIterations == null ? 2 : params.smoothIterations);
+    let colors = null;
+    if (params.colors !== false) {
+      const gridNormals = vertexNormals(smoothed, mesh.indices);
+      colors = colorize(smoothed, gridNormals, mesh.indices, usable, c, usable.map(v => images[v.src]));
+    }
+    if (progress) progress('mesh', 0.8);
+    const fin = finalizeMesh(smoothed, mesh.indices, c.voxel, c.ny, params.heightMm || 0, !!params.mirror, params.measure, params.widthMm > 0 && params.measure === 'height' ? params.widthMm : 0);
+    if (progress) progress('mesh', 1);
+    return {
+      positions: fin.positions, indices: fin.indices, dims: fin.dims, colors,
+      volumeMm3: meshVolume(fin.positions, fin.indices),
+      triangles: fin.indices.length / 3, vertices: fin.positions.length / 3,
+      grid: [c.nx, c.ny, c.nz], filledVoxels: filled,
+      views: views.map(v => ({ stats: v.stats, bg: v.bg })),
+      pose: pose ? pose.best : null, rejected,
+    };
+  }
+  function toFloat(occ) { const f = new Float32Array(occ.length); for (let i = 0; i < occ.length; i++) f[i] = occ[i]; return f; }
+
+  const api = { orbitPipeline, hollowOpenTop, autoPose, hullScore, trimCaps, coverage, estimateBackground, segment, maskFromSaliency, resampleRGBA, buildCameras, colorize, buildPLY, buildOBJ, buildZipMulti, carve, smoothField, surfaceNets, taubinSmooth, finalizeMesh, meshVolume, vertexNormals, buildSTL, buildZip, crc32, reconstruct };
+
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = api;
+  } else if (typeof self !== 'undefined' && typeof importScripts === 'function') {
+    self.onmessage = (ev) => {
+      const msg = ev.data;
+      try {
+        if (msg.type === 'ml-init') {
+          msg.cfg.msgId = msg.id;
+          mlInit(msg.cfg).then(r => self.postMessage({ type: 'ml-init', id: msg.id, ok: r.ok, error: r.error }));
+          return;
+        } else if (msg.type === 'ml-predict') {
+          (async () => {
+            const out = [];
+            for (let i = 0; i < msg.images.length; i++) {
+              const im = msg.images[i];
+              out.push(await mlSegmentImage(im.data, im.w, im.h));
+              self.postMessage({ type: 'progress', id: msg.id, stage: 'ml', f: (i + 1) / msg.images.length });
+            }
+            self.postMessage({ type: 'ml-predict', id: msg.id, results: out }, out.map(o => o.sal.buffer));
+          })().catch(e => self.postMessage({ type: 'error', id: msg.id, message: e && e.message ? e.message : String(e) }));
+          return;
+        } else if (msg.type === 'live') {
+          (async () => {
+            const im = msg.image; let mask, ok = true;
+            if (ML.ready) {
+              const sal = await mlPredict(resampleRGBA(im.data, im.w, im.h, [0, 0, im.w, im.h], ML.size));
+              mask = maskFromSaliency(sal, ML.size, im.w, im.h, 0.5, [0, 0, im.w, im.h]);
+            } else { mask = segment(im.data, im.w, im.h, { mode: 'complex', threshold: 40 }).mask; ok = false; }
+            self.postMessage({ type: 'live', id: msg.id, mask, stats: maskStats(mask, im.w, im.h), ml: ok }, [mask.buffer]);
+          })().catch(e => self.postMessage({ type: 'error', id: msg.id, message: e && e.message ? e.message : String(e) }));
+          return;
+        } else if (msg.type === 'segment') {
+          const out = msg.images.map(im => { const r = segment(im.data, im.w, im.h, Object.assign({}, msg.params, { ml: im.ml })); return { mask: r.mask, bg: r.bg, stats: r.stats }; });
+          self.postMessage({ type: 'segmented', id: msg.id, views: out }, out.map(o => o.mask.buffer));
+        } else if (msg.type === 'reconstruct') {
+          const r = reconstruct(msg.images, msg.params, (stage, f) => self.postMessage({ type: 'progress', id: msg.id, stage, f }));
+          const normals = vertexNormals(r.positions, r.indices);
+          r.normals = normals;
+          const tr = [r.positions.buffer, r.indices.buffer, normals.buffer]; if (r.colors) tr.push(r.colors.buffer);
+          self.postMessage({ type: 'done', id: msg.id, result: r }, tr);
+        } else if (msg.type === 'color-export') {
+          const ply = new Uint8Array(buildPLY(msg.positions, msg.indices, msg.colors));
+          const obj = buildOBJ(msg.positions, msg.indices, msg.colors, msg.name);
+          const zip = buildZipMulti([{ name: msg.name + '.ply', data: ply }, { name: msg.name + '.obj', data: obj }]);
+          self.postMessage({ type: 'color-export', id: msg.id, zip: zip.buffer }, [zip.buffer]);
+        } else if (msg.type === 'stl') {
+          const stl = buildSTL(msg.positions, msg.indices, msg.name);
+          self.postMessage({ type: 'stl', id: msg.id, stl }, [stl]);
+        }
+      } catch (e) {
+        self.postMessage({ type: 'error', id: msg.id, message: e && e.message ? e.message : String(e) });
+      }
+    };
+  } else {
+    root.PhotoSTLEngine = api;
+  }
+})(typeof self !== 'undefined' ? self : this);
+</script>
+<script>
+(function () {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const WORK = 768, THUMB = 180;
+  const E = window.PhotoSTLEngine;
+  const inArtifact = !!(window.claude && typeof window.claude.use === 'function');
+  let framed = true; try { framed = window.top !== window; } catch (e) { framed = true; }
+  const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function loadStatus(t, err) { const el = $('load-status'); if (!el) return; el.textContent = t; el.classList.toggle('err', !!err); el.hidden = !t; }
+  window.addEventListener('error', (e) => { loadStatus('Erreur dans la page : ' + (e.message || 'inconnue'), true); });
+  window.addEventListener('unhandledrejection', (e) => { const r = e.reason; loadStatus('Erreur : ' + (r && r.message ? r.message : r), true); });
+  // Les sélecteurs de fichiers sont branchés en premier : ils marchent même si la suite échoue.
+  let pendingFiles = null, appReady = false;
+  function onFiles(e) { const fl = Array.from(e.target.files || []); try { e.target.value = ''; } catch (_) {} if (appReady) addFiles(fl); else { pendingFiles = fl; loadStatus('Photos reçues, l\u2019application termine son démarrage…'); } }
+  $('file-input').addEventListener('change', onFiles);
+  $('capture-input').addEventListener('change', onFiles);
+  let pendingVideo = null;
+  function onVideo(e) { const f = (e.target.files || [])[0]; try { e.target.value = ''; } catch (_) {} if (!f) return; if (appReady) addVideo(f); else { pendingVideo = f; loadStatus('Vidéo reçue, l\u2019application termine son démarrage…'); } }
+  $('video-capture').addEventListener('change', onVideo);
+  $('video-input').addEventListener('change', onVideo);
+
+  // ---------- Worker (avec repli sur le fil principal) ----------
+  let worker = null;
+  try {
+    const workerSrc = document.getElementById('engine').textContent;
+    worker = new Worker(URL.createObjectURL(new Blob([workerSrc], { type: 'text/javascript' })));
+  } catch (e) { worker = null; }
+  let msgId = 0; const pending = new Map();
+  if (worker) {
+    worker.onmessage = (ev) => {
+      const m = ev.data; const p = pending.get(m.id); if (!p) return;
+      if (m.type === 'progress') { p.onProgress && p.onProgress(m.stage, m.f); return; }
+      pending.delete(m.id);
+      if (m.type === 'error') p.reject(new Error(m.message)); else p.resolve(m);
+    };
+    worker.onerror = (e) => { if (e && e.preventDefault) e.preventDefault(); worker = null; pending.forEach(p => p.reject(new Error('moteur en arrière-plan arrêté'))); pending.clear(); };
+  }
+  // exécution directe des calculs quand le worker n'est pas disponible
+  async function callLocal(msg, onProgress) {
+    await new Promise(r => setTimeout(r, 20));
+    if (msg.type === 'segment') return { views: msg.images.map(im => { const r = E.segment(im.data, im.w, im.h, Object.assign({}, msg.params, { ml: im.ml })); return { mask: r.mask, bg: r.bg, stats: r.stats }; }) };
+    if (msg.type === 'reconstruct') { const r = E.reconstruct(msg.images, msg.params, (st, f) => onProgress && onProgress(st, f)); r.normals = E.vertexNormals(r.positions, r.indices); return { result: r }; }
+    if (msg.type === 'stl') return { stl: E.buildSTL(msg.positions, msg.indices, msg.name) };
+    if (msg.type === 'ml-init') return { ok: false, error: 'moteur en arrière-plan indisponible' };
+    throw new Error('opération indisponible sans moteur en arrière-plan');
+  }
+  function call(msg, onProgress, transfer) {
+    if (!worker) return callLocal(msg, onProgress);
+    return new Promise((resolve, reject) => { const id = ++msgId; pending.set(id, { resolve, reject, onProgress }); worker.postMessage(Object.assign({ id }, msg), transfer || []); });
+  }
+
+  // ---------- État ----------
+  const photos = [];           // {id, name, time, w, h, data, base, thumb, mask, stats, ml, angle, angleEdited, example}
+  let result = null;
+  let exampleLoaded = false;
+  let segTimer = null, segBusy = false, segAgain = false, running = false, mlBusy = false;
+  let uid = 0;
+  const ml = { state: 'idle', promise: null, error: null }; // idle | loading | ready | failed
+
+  const ui = {
+    thumbs: $('thumbs'), empty: $('empty'), count: $('photo-count'), anglesRow: $('angles-row'), run: $('btn-run'), dl: $('btn-download'), bar: $('bar'), status: $('status'), warnings: $('warnings'),
+    detect: $('detect'), capture: $('capture'), detectStatus: $('detect-status'), fieldBg: $('field-bg'),
+    threshold: $('threshold'), thresholdOut: $('threshold-out'), bgMode: $('bg-mode'), bgColor: $('bg-color'), direction: $('direction'), resolution: $('resolution'),
+    smooth: $('smooth'), smoothOut: $('smooth-out'), height: $('height'), fname: $('fname'), shadows: $('shadows'), mirror: $('mirror'), sortTime: $('sort-time'),
+    stats: $('stats'), overlay: $('viewer-overlay'), badge: $('viewer-badge'), exportNote: $('export-note'), clear: $('btn-clear'),
+    focal: $('focal'), fieldFocal: $('field-focal'), elev: $('elev'), fieldElev: $('field-elev'), width: $('width'), frames: $('frames'), showColors: $('show-colors'), btnColor: $('btn-color'),
+  };
+
+  function setStatus(t, err) { ui.status.textContent = t; ui.status.classList.toggle('err', !!err); }
+  function setBar(f) { ui.bar.style.width = Math.round(Math.max(0, Math.min(1, f)) * 100) + '%'; }
+  let toastTimer = null;
+  function toast(t) {
+    let el = document.querySelector('.toast'); if (!el) { el = document.createElement('div'); el.className = 'toast'; document.body.appendChild(el); }
+    el.textContent = t; el.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { el.hidden = true; }, 3200);
+  }
+  const detectLabels = { ml: 'détection automatique', uniform: 'fond uni', complex: 'fond quelconque (couleurs)' };
+
+  function params() {
+    const p = {
+      mode: ui.detect.value, handheld: ui.capture.value === 'handheld',
+      camera: ui.capture.value !== 'handheld' ? 'ortho' : (+ui.focal.value <= 0 ? 'ortho' : (ui.elev.value === 'level' ? 'persp' : 'orbit')),
+      elevationDeg: (ui.elev.value === 'level' || ui.elev.value === 'auto' || ui.elev.value === 'sensor') ? (ui.elev.value === 'level' ? 0 : 25) : +ui.elev.value,
+      focal: +ui.focal.value || 0.75, measure: 'height',
+      hollow: $('hollow').checked ? { wallMm: Math.max(0.5, +$('wall').value || 3), bottomMm: Math.max(0.5, +$('wall').value || 3) } : null,
+      threshold: +ui.threshold.value, ignoreShadows: ui.shadows.checked, direction: +ui.direction.value, resolution: +ui.resolution.value,
+      smoothIterations: +ui.smooth.value, heightMm: Math.max(0, +ui.height.value || 0), mirror: ui.mirror.checked,
+    };
+    if (ui.bgMode.value === 'manual') { const h = ui.bgColor.value; p.bg = [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)]; }
+    return p;
+  }
+  // mesures : hauteur et/ou largeur ; avec les deux, la plongée est calculée
+  function applyMeasures(p) {
+    const H = Math.max(0, +ui.height.value || 0), Wd = Math.max(0, +ui.width.value || 0);
+    if (H > 0) { p.heightMm = H; p.measure = 'height'; if (Wd > 0) { p.widthMm = Wd; if (ui.elev.value === 'auto' && p.camera === 'orbit') p.targetRatio = Wd / H; } }
+    else if (Wd > 0) { p.heightMm = Wd; p.measure = 'width'; }
+    return p;
+  }
+  function imagesForWorker() { const sensor = ui.elev.value === 'sensor' && photos.every(p => p.elevDeg != null); return photos.map(p => ({ data: p.data, w: p.w, h: p.h, ml: ui.detect.value === 'ml' ? p.ml : null, angleDeg: p.angle, elevDeg: sensor ? p.elevDeg : null })); }
+
+  // ---------- Détecteur neuronal (ONNX Runtime + U²-Net léger) ----------
+  function b64ToBuffer(b64) {
+    const bin = atob(b64.replace(/\s+/g, '')); const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out.buffer;
+  }
+  const U2NETP = { name: 'u2netp', size: 320, norm: 'imagenet' };
+  function mlAssets() {
+    const inline = document.getElementById('ort-src');
+    if (inline) {
+      const wasm = document.getElementById('wasm-simd-b64'), model = document.getElementById('model-b64');
+      if (!wasm || !model) return null;
+      const wasmBuf = b64ToBuffer(wasm.textContent), modelBuf = b64ToBuffer(model.textContent);
+      return { cfg: { ortSource: inline.textContent, wasmBuffers: { 'ort-wasm-simd.wasm': wasmBuf, 'ort-wasm.wasm': wasmBuf }, modelBuffer: modelBuf, model: U2NETP }, transfer: [wasmBuf, modelBuf] };
+    }
+    if (window.PHOTO_STL_ASSETS === 'cdn') {
+      const ort = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.3/dist/';
+      return { cfg: { ortUrl: ort + 'ort.min.js', wasmPaths: ort, model: Object.assign({ urls: ['https://cdn.jsdelivr.net/npm/@rmbg/model-u2netp@0.0.1/u2netp.onnx'], encoding: 'binary' }, U2NETP) }, transfer: [] };
+    }
+    const base = new URL('.', document.baseURI).href;
+    return { cfg: { ortUrl: base + 'ort.min.js', wasmPaths: base, model: Object.assign({ urls: [base + 'u2netp-model.txt'], encoding: 'base64' }, U2NETP) }, transfer: [] };
+  }
+  const ML_FLAG = 'photo-stl-detecteur-en-cours';
+  function flagSet(v) { try { if (v) localStorage.setItem(ML_FLAG, String(Date.now())); else localStorage.removeItem(ML_FLAG); } catch (e) {} }
+  function flagGet() { try { return localStorage.getItem(ML_FLAG); } catch (e) { return null; } }
+  function mlEnsure() {
+    if (ml.promise) return ml.promise;
+    ml.state = 'loading';
+    flagSet(true);
+    ui.detectStatus.textContent = 'Chargement du détecteur d’objet (environ 15 Mo, une seule fois)…';
+    ml.promise = (async () => {
+      let assets;
+      try { assets = mlAssets(); } catch (e) { assets = null; }
+      if (!assets) { flagSet(false); ml.state = 'failed'; ml.error = 'fichiers absents'; return false; }
+      const r = await call({ type: 'ml-init', cfg: assets.cfg }, null, assets.transfer);
+      flagSet(false);
+      if (r.ok) { ml.state = 'ready'; ui.detectStatus.textContent = 'Détecteur prêt. Les vignettes montrent en couleur la silhouette retenue ; ajuste la sensibilité si besoin.'; return true; }
+      ml.state = 'failed'; ml.error = r.error; return false;
+    })().catch(e => { flagSet(false); ml.state = 'failed'; ml.error = e.message; return false; });
+    return ml.promise;
+  }
+  function mlFallback() {
+    if (ui.detect.value !== 'ml') return;
+    ui.detect.value = 'complex'; syncDetectUI();
+    ui.detectStatus.textContent = 'Le détecteur automatique n’a pas pu se charger ici (' + (ml.error || 'inconnu') + '). Mode couleurs utilisé : le fond uni donne les meilleurs résultats. La version fichier de l’application embarque le détecteur.';
+    setStatus('Détecteur automatique indisponible : bascule en mode couleurs.');
+    if (photos.length) scheduleSegment();
+  }
+  // calcule les cartes de saillance manquantes
+  async function mlDetectMissing() {
+    const todo = photos.filter(p => !p.ml);
+    if (!todo.length) return true;
+    if (mlBusy) return false;
+    mlBusy = true; ui.run.disabled = true;
+    try {
+      if (ml.state !== 'ready') setStatus('Photos chargées. Téléchargement du détecteur d\u2019objet (15 Mo, une seule fois)… Si c\u2019est trop long, choisis « Fond quelconque (couleurs) » dans Détection.');
+      const ok = await Promise.race([mlEnsure(), new Promise(r => setTimeout(() => r('timeout'), 120000))]);
+      if (ok === 'timeout') { ml.error = 'délai dépassé'; ml.state = 'failed'; flagSet(false); }
+      if (ok !== true) { mlFallback(); return false; }
+      setStatus('Détection de l’objet sur ' + todo.length + ' photo' + (todo.length > 1 ? 's' : '') + '…'); setBar(0.02);
+      const r = await call({ type: 'ml-predict', images: todo.map(p => ({ data: p.data, w: p.w, h: p.h })) },
+        (stage, f) => { setBar(f); setStatus('Détection de l’objet… ' + Math.round(f * todo.length) + ' / ' + todo.length); });
+      r.results.forEach((res, i) => { if (photos.includes(todo[i])) todo[i].ml = res; });
+      setBar(0); setStatus('');
+      return true;
+    } catch (e) { setStatus('Détection impossible : ' + e.message, true); return false; }
+    finally { mlBusy = false; ui.run.disabled = photos.length < 3 || running; }
+  }
+
+  // ---------- Chargement des images ----------
+  async function decode(file) {
+    const errs = [];
+    if (typeof createImageBitmap === 'function') {
+      try { return await createImageBitmap(file, { imageOrientation: 'from-image' }); } catch (e) { errs.push(e && e.message); }
+      try { return await createImageBitmap(file); } catch (e) { errs.push(e && e.message); }
+    }
+    const url = URL.createObjectURL(file);
+    try {
+      return await new Promise((res, rej) => {
+        const im = new Image(); im.decoding = 'async';
+        im.onload = () => res(im); im.onerror = () => rej(new Error('format non pris en charge par ce navigateur (HEIC ?)'));
+        im.src = url;
+      });
+    } finally { setTimeout(() => URL.revokeObjectURL(url), 30000); }
+  }
+  function makePhoto(src, name, time, example) {
+    const W0 = src.width || src.naturalWidth, H0 = src.height || src.naturalHeight;
+    let w, h;
+    if (photos.length) { w = photos[0].w; h = photos[0].h; }
+    else { const sc = Math.min(1, WORK / Math.max(W0, H0)); w = Math.max(8, Math.round(W0 * sc)); h = Math.max(8, Math.round(H0 * sc)); }
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const ctx = c.getContext('2d'); ctx.drawImage(src, 0, 0, w, h);
+    const data = ctx.getImageData(0, 0, w, h).data;
+    const t = document.createElement('canvas'); const ts = THUMB / Math.max(w, h); t.width = Math.round(w * ts); t.height = Math.round(h * ts);
+    t.getContext('2d').drawImage(c, 0, 0, t.width, t.height);
+    const aspectOff = Math.abs((W0 / H0) / (w / h) - 1) > 0.05;
+    return { id: ++uid, name, time, w, h, data, base: t, thumb: null, mask: null, stats: null, ml: null, angle: 0, angleEdited: false, example: !!example, aspectOff };
+  }
+  function spreadAngles(force) {
+    if (!force && photos.some(p => p.angleEdited)) return;
+    const n = photos.length;
+    photos.forEach((p, i) => { p.angle = Math.round(i * 360 / n); p.angleEdited = false; });
+  }
+  function startUserSet() {
+    if (!exampleLoaded) return;
+    clearAll(true); ui.detect.value = (ml.state === 'failed') ? 'complex' : 'ml'; ui.capture.value = 'handheld'; ui.fname.value = 'objet'; ui.height.value = 80; ui.threshold.value = 40; ui.thresholdOut.textContent = '40'; syncDetectUI();
+    if (crashedBefore) ui.detectStatus.textContent = CRASH_MSG;
+  }
+  // ---------- Vidéo : extraction d'images régulièrement espacées ----------
+  function waitFor(el, ok, ms) {
+    return new Promise((res, rej) => {
+      const t = setTimeout(() => { done(); rej(new Error('délai dépassé')); }, ms);
+      const onOk = () => { done(); res(); }, onErr = () => { done(); rej(new Error('vidéo illisible dans ce navigateur')); };
+      function done() { clearTimeout(t); el.removeEventListener(ok, onOk); el.removeEventListener('error', onErr); }
+      el.addEventListener(ok, onOk); el.addEventListener('error', onErr);
+    });
+  }
+  async function openVideo(file) {
+    const video = document.createElement('video');
+    video.muted = true; video.playsInline = true; video.preload = 'auto';
+    video.setAttribute('muted', ''); video.setAttribute('playsinline', '');
+    const sources = [() => URL.createObjectURL(file), () => new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = () => rej(new Error('lecture impossible')); fr.readAsDataURL(file); })];
+    let lastErr = null;
+    for (const mk of sources) {
+      try {
+        const src = await mk(); video.src = src;
+        await waitFor(video, 'loadedmetadata', 20000);
+        if (!isFinite(video.duration) || !video.duration) { video.currentTime = 1e7; await waitFor(video, 'seeked', 10000); }
+        try { await video.play(); video.pause(); } catch (e) { /* lecture auto refusée : on se contente du positionnement */ }
+        if (video.videoWidth > 0) return video;
+      } catch (e) { lastErr = e; }
+    }
+    throw lastErr || new Error('vidéo illisible');
+  }
+  async function addVideo(file) {
+    if (loading) { loadStatus('Lecture déjà en cours, patiente…'); return; }
+    loading = true;
+    try {
+      startUserSet();
+      loadStatus('Ouverture de la vidéo…');
+      const video = await openVideo(file);
+      const n = +ui.frames.value || 24, dur = video.duration;
+      if (!(dur > 0.5)) throw new Error('vidéo trop courte');
+      const cv = document.createElement('canvas'); cv.width = video.videoWidth; cv.height = video.videoHeight; const g = cv.getContext('2d');
+      const before = photos.length;
+      for (let k = 0; k < n; k++) {
+        loadStatus('Extraction de l\u2019image ' + (k + 1) + ' sur ' + n + '…');
+        video.currentTime = Math.min(dur - 0.05, (k + 0.5) * dur / n);
+        await waitFor(video, 'seeked', 15000);
+        await new Promise(r => requestAnimationFrame(() => r()));
+        g.drawImage(video, 0, 0, cv.width, cv.height);
+        const ph = makePhoto(cv, 'video_' + (k + 1), k);
+        ph.angle = Math.round(360 * k / n); ph.angleEdited = true; ph.fromVideo = true;
+        photos.push(ph);
+        if (k % 4 === 3) renderThumbs();
+      }
+      try { URL.revokeObjectURL(video.src); } catch (e) {}
+      if (blankFrames(photos.slice(before))) throw new Error('les images extraites sont noires : ce navigateur ne laisse pas lire la vidéo image par image. Utilise « Rafale photo » ou « Choisir des photos ».');
+      renderThumbs();
+      loadStatus(n + ' images tirées de la vidéo (' + dur.toFixed(1) + ' s), angles répartis sur un tour complet.');
+    } catch (e) {
+      loadStatus('Vidéo inutilisable : ' + (e && e.message ? e.message : e), true);
+    } finally { loading = false; }
+    if (photos.length) await refreshDetection();
+  }
+  function blankFrames(list) {
+    if (!list.length) return false;
+    return list.every(p => { let s = 0; for (let i = 0; i < p.data.length; i += 4 * 97) s += p.data[i] + p.data[i + 1] + p.data[i + 2]; return s / (p.data.length / (4 * 97)) < 6; });
+  }
+
+  // ---------- Scan en direct : caméra + détection + radar de couverture + capteurs d'orientation ----------
+  const RINGS = [{ n: 24, max: 32 }, { n: 12, max: 75 }];   // tour 1 : plongée < 32°, tour 2 : au-dessus
+  const scan = { stream: null, raf: 0, ori: null, sensors: false, h0: null, filled: [[], []], shots: [], live: null, liveBusy: false, liveT: 0, lastShot: 0, lastHead: null, lastHeadT: 0, angVel: 0, small: null, sensorTimer: 0 };
+  function deg(x) { return x * 180 / Math.PI; }
+  function onOrientation(e) {
+    if (e.alpha == null || e.beta == null || e.gamma == null) return;
+    const A = e.alpha * Math.PI / 180, B = e.beta * Math.PI / 180, G = e.gamma * Math.PI / 180;
+    const cA = Math.cos(A), sA = Math.sin(A), cB = Math.cos(B), sB = Math.sin(B), cG = Math.cos(G), sG = Math.sin(G);
+    // direction de l'objectif arrière (axe -z de l'appareil) dans le repère Est-Nord-Haut
+    const vx = -(cA * sG + cG * sA * sB), vy = -(sA * sG - cA * cG * sB), vz = -cB * cG;
+    const head = deg(Math.atan2(vx, vy));                        // cap, sens horaire depuis le nord
+    const elev = deg(Math.asin(Math.max(-1, Math.min(1, -vz)))); // plongée (positive vers le bas)
+    const roll = deg(Math.asin(Math.max(-1, Math.min(1, -cB * sG))));
+    const now = performance.now();
+    if (scan.lastHead != null) { let d = head - scan.lastHead; d = ((d + 540) % 360) - 180; const dt = Math.max(1, now - scan.lastHeadT) / 1000; scan.angVel = 0.7 * scan.angVel + 0.3 * Math.abs(d) / dt; }
+    scan.lastHead = head; scan.lastHeadT = now;
+    scan.ori = { head, elev, roll, t: now }; scan.sensors = true;
+  }
+  function scanAzimuth() { // angle autour de l'objet, sens trigonométrique vu de dessus, 0 = première photo
+    if (!scan.ori || scan.h0 == null) return 0;
+    return ((-(scan.ori.head - scan.h0)) % 360 + 360) % 360;
+  }
+  function showScanHelp() {
+    $('scan-help').hidden = false; loadStatus('');
+    $('scan-help').scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' });
+  }
+  async function getApp() {
+    const btn = $('btn-get-app'); btn.disabled = true;
+    try {
+      const resp = await fetch('photo-vers-stl.html');
+      if (!resp.ok) throw new Error('fichier introuvable (' + resp.status + ')');
+      const blob = await resp.blob();
+      const dl = await window.claude.use('downloads');
+      if (!dl) throw new Error('téléchargement indisponible dans cette vue');
+      await dl.save({ filename: 'index.html', data: blob });
+      $('help-step1').textContent = 'Fichier index.html enregistré dans Téléchargements.';
+    } catch (e) {
+      if (e && e.code === 'declined') $('help-step1').textContent = 'Téléchargement annulé. Réessaie :';
+      else $('help-step1').textContent = 'Téléchargement impossible (' + ((e && (e.message || e.code)) || 'erreur') + '). Utilise le fichier envoyé dans la conversation.';
+    } finally { btn.disabled = false; }
+  }
+  async function copyPath() {
+    const el = $('app-path'), txt = el.textContent;
+    try { await navigator.clipboard.writeText(txt); toast('Adresse copiée'); }
+    catch (e) { const r = document.createRange(); r.selectNodeContents(el); const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r); toast('Adresse sélectionnée : copie-la avec un appui long'); }
+  }
+  async function openScan() {
+    const fail = (why) => {
+      if (inArtifact && framed) { showScanHelp(); return; }
+      const insecure = window.isSecureContext === false;
+      loadStatus('Le scan en direct n\u2019a pas accès à la caméra (' + why + ').' + (insecure ? ' Le navigateur juge cette façon d\u2019ouvrir la page non sûre : mets plutôt l\u2019application sur ta propre adresse https (GitHub Pages, voir l\u2019aide sur la page claude.ai).' : ' Vérifie que la caméra est autorisée pour cette page dans les réglages du navigateur.') + ' Sinon, utilise « Filmer en tournant ».', true);
+    };
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { fail('caméra indisponible'); return; }
+    try { if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') await DeviceOrientationEvent.requestPermission(); } catch (e) { /* refus : mode sans capteurs */ }
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false }); }
+    catch (e) { fail((e && e.name) || 'refus'); return; }
+    startUserSet();
+    Object.assign(scan, { stream, ori: null, sensors: false, h0: null, filled: RINGS.map(r => new Array(r.n).fill(false)), shots: [], live: null, liveBusy: false, liveT: 0, lastShot: 0, lastHead: null, angVel: 0 });
+    window.addEventListener('deviceorientation', onOrientation, true);
+    const v = $('scan-video'); v.srcObject = stream; try { await v.play(); } catch (e) {}
+    $('scan').hidden = false;
+    mlEnsure();
+    scan.raf = requestAnimationFrame(scanLoop);
+  }
+  function scanQuality() {
+    const L = scan.live; if (!L || performance.now() - L.t > 1600) return { ok: false, hint: 'Vise l’objet : il doit apparaître en couleur.' };
+    const frac = L.stats.area / (L.w * L.h);
+    if (frac < 0.01) return { ok: false, hint: 'Objet non détecté : vise-le et rapproche-toi.' };
+    if (L.stats.touchesBorder) return { ok: false, hint: 'Recule un peu : l’objet touche le bord de l’image.' };
+    if (frac < 0.03) return { ok: false, hint: 'Approche-toi : l’objet est trop petit dans l’image.' };
+    if (frac > 0.6) return { ok: false, hint: 'Recule : l’objet remplit presque toute l’image.' };
+    if (scan.sensors && scan.ori && Math.abs(scan.ori.roll) > 12) return { ok: false, hint: 'Tiens le téléphone droit.' };
+    if (scan.sensors && scan.angVel > 70) return { ok: false, hint: 'Plus lentement.' };
+    return { ok: true };
+  }
+  function scanShot(azimuth, elev) {
+    const v = $('scan-video'); if (!v.videoWidth) return;
+    const cv = document.createElement('canvas'); cv.width = v.videoWidth; cv.height = v.videoHeight; cv.getContext('2d').drawImage(v, 0, 0);
+    if (photos.length && (photos[0].w > photos[0].h) !== (cv.width > cv.height)) return; // orientation changée : on ignore
+    const ph = makePhoto(cv, 'scan_' + (scan.shots.length + 1), Date.now());
+    ph.angle = Math.round(azimuth); ph.angleEdited = true; if (elev != null) ph.elevDeg = Math.round(elev * 10) / 10;
+    photos.push(ph); scan.shots.push(ph); scan.lastShot = performance.now();
+    scan.flash = performance.now();
+    try { if (navigator.vibrate) navigator.vibrate(25); } catch (e) {}
+  }
+  function scanLoop() {
+    if ($('scan').hidden) return;
+    scan.raf = requestAnimationFrame(scanLoop);
+    const v = $('scan-video'), cv = $('scan-canvas'), g = cv.getContext('2d');
+    const dpr = Math.min(2, window.devicePixelRatio || 1), W = Math.round(cv.clientWidth * dpr), H = Math.round(cv.clientHeight * dpr);
+    if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+    g.fillStyle = '#000'; g.fillRect(0, 0, W, H);
+    if (!v.videoWidth) return;
+    const sc = Math.min(W / v.videoWidth, H / v.videoHeight), dw = v.videoWidth * sc, dh = v.videoHeight * sc, ox = (W - dw) / 2, oy = (H - dh) / 2;
+    g.drawImage(v, ox, oy, dw, dh);
+    const now = performance.now();
+    // détection en direct (image réduite, une passe)
+    if (!scan.liveBusy && now - scan.liveT > 200) {
+      const lw = v.videoWidth > v.videoHeight ? 320 : 180, lh = Math.round(lw * v.videoHeight / v.videoWidth);
+      if (!scan.small) scan.small = document.createElement('canvas');
+      scan.small.width = lw; scan.small.height = lh; const sg = scan.small.getContext('2d'); sg.drawImage(v, 0, 0, lw, lh);
+      const data = sg.getImageData(0, 0, lw, lh).data;
+      scan.liveBusy = true; scan.liveT = now;
+      call({ type: 'live', image: { data, w: lw, h: lh } }).then(r => { scan.live = { mask: r.mask, stats: r.stats, w: lw, h: lh, t: performance.now(), ml: r.ml }; })
+        .catch(() => {}).finally(() => { scan.liveBusy = false; });
+    }
+    // secteur courant
+    const elev = scan.sensors && scan.ori ? scan.ori.elev : null;
+    const ring = elev != null && elev >= RINGS[0].max ? 1 : 0;
+    const az = scan.sensors ? scanAzimuth() : (scan.shots.length * 15) % 360;
+    const sec = Math.floor(az / (360 / RINGS[ring].n)) % RINGS[ring].n;
+    const already = scan.filled[ring][sec];
+    // silhouette en surimpression : orange = zone à scanner, vert = zone déjà scannée
+    const L = scan.live;
+    if (L && now - L.t < 1600) {
+      if (!scan.maskCv) scan.maskCv = document.createElement('canvas');
+      const mc = scan.maskCv; mc.width = L.w; mc.height = L.h; const mg = mc.getContext('2d'); const id = mg.createImageData(L.w, L.h);
+      const col = already ? [46, 190, 110] : [245, 150, 40];
+      const lw = L.w;
+      for (let i = 0, o = 0; i < L.mask.length; i++, o += 4) if (L.mask[i]) {
+        const x = i % lw, edge = !L.mask[i - 1] || !L.mask[i + 1] || !L.mask[i - lw] || !L.mask[i + lw] || x === 0 || x === lw - 1;
+        id.data[o] = col[0]; id.data[o + 1] = col[1]; id.data[o + 2] = col[2]; id.data[o + 3] = edge ? 255 : 70;   // contour net, intérieur léger
+      }
+      mg.putImageData(id, 0, 0); g.imageSmoothingEnabled = true; g.drawImage(mc, ox, oy, dw, dh);
+    }
+    if (scan.flash && now - scan.flash < 120) { g.fillStyle = 'rgba(255,255,255,0.35)'; g.fillRect(0, 0, W, H); }
+    // capture automatique
+    const q = scanQuality();
+    if (q.ok) {
+      if (scan.sensors) {
+        if (scan.h0 == null) { scan.h0 = scan.ori.head; }
+        const az2 = scanAzimuth(), r2 = scan.ori.elev >= RINGS[0].max ? 1 : 0, s2 = Math.floor(az2 / (360 / RINGS[r2].n)) % RINGS[r2].n;
+        if (!scan.filled[r2][s2] && scan.ori.elev <= RINGS[1].max && now - scan.lastShot > 250) { scanShot(az2, scan.ori.elev); scan.filled[r2][s2] = true; }
+      } else if (now - scan.lastShot > 900 && scan.shots.length < RINGS[0].n) {
+        scanShot(0, null); scan.filled[0][scan.shots.length - 1] = true;
+      }
+    }
+    // textes
+    const c1 = scan.filled[0].filter(Boolean).length, c2 = scan.filled[1].filter(Boolean).length;
+    $('scan-c1').textContent = c1 + ' / ' + RINGS[0].n; $('scan-c2').textContent = scan.sensors ? c2 + ' / ' + RINGS[1].n : '–';
+    $('scan-elev').textContent = elev != null ? Math.round(elev) + '°' : 'capteur absent';
+    let hint = q.ok ? '' : q.hint;
+    if (!hint) {
+      if (!scan.sensors) hint = 'Capteurs d’orientation indisponibles : une photo par seconde, fais un tour complet à vitesse régulière.';
+      else if (c1 < RINGS[0].n) hint = 'Tourne autour de l’objet, téléphone à sa hauteur ou un peu au-dessus. Les zones vertes sont faites.';
+      else if (c2 < RINGS[1].n) hint = 'Premier tour complet ! Fais un second tour en levant le téléphone (plongée de plus de ' + RINGS[0].max + '°).';
+      else hint = 'Scan complet. Appuie sur Terminer.';
+    }
+    $('scan-hint').textContent = hint;
+    drawRadar(az, ring, sec);
+  }
+  function drawRadar(az, ring, sec) {
+    const cv = $('scan-radar'), g = cv.getContext('2d'), S = cv.width, c = S / 2;
+    g.clearRect(0, 0, S, S);
+    const radii = [[0.47, 0.36], [0.33, 0.22]];
+    RINGS.forEach((R, ri) => {
+      const step = 2 * Math.PI / R.n;
+      for (let k = 0; k < R.n; k++) {
+        // angle écran : 0 en bas, sens trigonométrique vu de dessus
+        const a0 = Math.PI / 2 - k * step - step + 0.02, a1 = Math.PI / 2 - k * step - 0.02;
+        g.beginPath(); g.arc(c, c, radii[ri][0] * S, a0, a1); g.arc(c, c, radii[ri][1] * S, a1, a0, true); g.closePath();
+        g.fillStyle = scan.filled[ri][k] ? '#2fbf6c' : 'rgba(255,255,255,0.18)'; g.fill();
+        if (ri === ring && k === sec) { g.lineWidth = 3; g.strokeStyle = '#fff'; g.stroke(); }
+      }
+    });
+    // flèche : position actuelle du téléphone autour de l'objet
+    const t = az * Math.PI / 180, x = c + Math.sin(t) * 0.5 * S * 0.98, y = c + Math.cos(t) * 0.5 * S * 0.98;
+    g.beginPath(); g.arc(x, y, 7, 0, 2 * Math.PI); g.fillStyle = '#fff'; g.fill();
+    g.fillStyle = '#e8b04a'; g.beginPath(); g.arc(c, c, 0.08 * S, 0, 2 * Math.PI); g.fill();
+  }
+  function closeScan(keep) {
+    cancelAnimationFrame(scan.raf);
+    window.removeEventListener('deviceorientation', onOrientation, true);
+    if (scan.stream) scan.stream.getTracks().forEach(t => t.stop());
+    scan.stream = null; $('scan').hidden = true;
+    if (!keep) { scan.shots.forEach(p => { const k = photos.indexOf(p); if (k >= 0) photos.splice(k, 1); }); scan.shots = []; renderThumbs(); return; }
+    if (scan.shots.length) {
+      if (!scan.sensors) { const n = scan.shots.length; scan.shots.forEach((p, k) => { p.angle = Math.round(360 * k / n); p.angleEdited = true; }); }
+      else { ui.elev.value = 'sensor'; ui.direction.value = '1'; }
+      ui.capture.value = 'handheld'; syncDetectUI();
+      renderThumbs();
+      loadStatus(scan.shots.length + ' photos prises pendant le scan' + (scan.sensors ? ', avec l’angle et la plongée mesurés par le téléphone.' : ', angles répartis sur un tour complet.'));
+      refreshDetection();
+    }
+  }
+
+  let loading = false;
+  async function addFiles(files) {
+    const list = Array.from(files || []).filter(f => f && f.size > 0);
+    if (!list.length) { loadStatus('Aucun fichier reçu. Réessaie en choisissant les photos depuis la galerie.', true); return; }
+    if (loading) { loadStatus('Lecture déjà en cours, patiente…'); return; }
+    loading = true;
+    try {
+      startUserSet();
+      if (ui.sortTime.checked) list.sort((a, b) => (a.lastModified || 0) - (b.lastModified || 0));
+      const failed = [];
+      for (let i = 0; i < list.length; i++) {
+        const f = list[i];
+        loadStatus('Lecture de la photo ' + (i + 1) + ' sur ' + list.length + '…');
+        try {
+          const bmp = await decode(f);
+          photos.push(makePhoto(bmp, f.name, f.lastModified || 0));
+          if (bmp.close) bmp.close();
+          renderThumbs();
+        } catch (e) { failed.push((f.name || 'photo ' + (i + 1)) + (e && e.message ? ' (' + e.message + ')' : '')); }
+        await new Promise(r => setTimeout(r, 0));
+      }
+      if (ui.sortTime.checked) photos.sort((a, b) => a.time - b.time);
+      spreadAngles(false);
+      renderThumbs();
+      const okN = list.length - failed.length;
+      loadStatus((okN ? okN + ' photo' + (okN > 1 ? 's' : '') + ' chargée' + (okN > 1 ? 's' : '') + '. ' : '') + (failed.length ? 'Illisible : ' + failed.join(', ') + '. Convertis en JPEG si besoin.' : ''), failed.length > 0 && !okN);
+    } catch (e) {
+      loadStatus('Chargement impossible : ' + (e && e.message ? e.message : e), true);
+    } finally { loading = false; }
+    if (photos.length) await refreshDetection();
+  }
+  function clearAll(silent) {
+    photos.length = 0; exampleLoaded = false; result = null; renderThumbs(); viewer.clear(); ui.stats.hidden = true; ui.dl.disabled = true; ui.btnColor.disabled = true; ui.badge.hidden = true; $('print-box').hidden = true;
+    ui.overlay.hidden = false; ui.warnings.innerHTML = ''; setBar(0); if (!silent) setStatus('');
+  }
+
+  // ---------- Vignettes ----------
+  function renderThumbs() {
+    ui.thumbs.innerHTML = '';
+    ui.empty.hidden = photos.length > 0;
+    ui.clear.hidden = photos.length === 0;
+    ui.anglesRow.hidden = photos.length === 0;
+    photos.forEach((p, i) => {
+      const d = document.createElement('div'); d.className = 'thumb'; d.dataset.id = p.id;
+      const pic = document.createElement('div'); pic.className = 'pic';
+      const c = p.thumb || p.base; pic.appendChild(c);
+      const n = document.createElement('span'); n.className = 'num'; n.textContent = String(i + 1); pic.appendChild(n);
+      const del = document.createElement('button'); del.className = 'del'; del.type = 'button'; del.title = 'Retirer cette photo'; del.setAttribute('aria-label', 'Retirer la photo ' + (i + 1)); del.textContent = '×';
+      del.addEventListener('click', () => { const k = photos.findIndex(x => x.id === p.id); if (k >= 0) photos.splice(k, 1); if (!photos.length) exampleLoaded = false; spreadAngles(false); renderThumbs(); refreshDetection(); });
+      pic.appendChild(del);
+      if (p.stats) {
+        const frac = p.stats.area / (p.w * p.h);
+        if (frac < 0.004) { d.classList.add('bad'); pic.insertAdjacentHTML('beforeend', '<span class="flag">objet non détecté</span>'); }
+        else if (p.stats.touchesBorder) pic.insertAdjacentHTML('beforeend', '<span class="flag">touche le bord</span>');
+        else if (frac > 0.6) pic.insertAdjacentHTML('beforeend', '<span class="flag">fond pris pour l’objet ?</span>');
+      }
+      d.appendChild(pic);
+      const ang = document.createElement('label'); ang.className = 'ang'; ang.innerHTML = '<span>angle</span>';
+      const inp = document.createElement('input'); inp.type = 'number'; inp.min = '0'; inp.max = '359.9'; inp.step = '1'; inp.value = String(p.angle); inp.id = 'angle-' + p.id; inp.setAttribute('aria-label', 'Angle de la photo ' + (i + 1) + ' en degrés');
+      inp.addEventListener('change', () => { const v = ((+inp.value % 360) + 360) % 360; p.angle = isFinite(v) ? v : 0; p.angleEdited = true; inp.value = String(p.angle); updateWarnings(); });
+      ang.appendChild(inp); ang.insertAdjacentHTML('beforeend', '<span>°</span>');
+      d.appendChild(ang);
+      ui.thumbs.appendChild(d);
+    });
+    const n = photos.length;
+    ui.count.textContent = n ? n + ' photo' + (n > 1 ? 's' : '') + (exampleLoaded ? ' · exemple de démonstration (une fusée jouet)' : ' · indique sous chaque photo l’angle parcouru autour de l’objet') : '';
+    ui.run.disabled = n < 3 || running || mlBusy;
+  }
+  function paintMask(p) {
+    const t = document.createElement('canvas'); t.width = p.base.width; t.height = p.base.height;
+    const ctx = t.getContext('2d'); ctx.drawImage(p.base, 0, 0);
+    if (p.mask) {
+      const m = document.createElement('canvas'); m.width = p.w; m.height = p.h;
+      const id = m.getContext('2d').createImageData(p.w, p.h);
+      const px = id.data;
+      for (let i = 0, o = 0; i < p.mask.length; i++, o += 4) { if (p.mask[i]) { px[o] = 14; px[o + 1] = 180; px[o + 2] = 190; px[o + 3] = 150; } }
+      m.getContext('2d').putImageData(id, 0, 0);
+      ctx.drawImage(m, 0, 0, t.width, t.height);
+    }
+    p.thumb = t;
+  }
+
+  // ---------- Segmentation (aperçu) ----------
+  async function refreshDetection() {
+    if (!photos.length) return;
+    if (ui.detect.value === 'ml') { const ok = await mlDetectMissing(); if (!ok && ui.detect.value === 'ml') return; }
+    await runSegment();
+  }
+  function scheduleSegment() { clearTimeout(segTimer); segTimer = setTimeout(runSegment, 250); }
+  async function runSegment() {
+    if (!photos.length) return;
+    if (segBusy) { segAgain = true; return; }
+    if (ui.detect.value === 'ml' && photos.some(p => !p.ml)) { refreshDetection(); return; }
+    segBusy = true;
+    const snapshot = photos.slice();
+    try {
+      const r = await call({ type: 'segment', images: imagesForWorker(), params: params() });
+      r.views.forEach((v, i) => { const p = snapshot[i]; if (!photos.includes(p)) return; p.mask = v.mask; p.stats = v.stats; paintMask(p); });
+      renderThumbs(); updateWarnings();
+    } catch (e) { setStatus('Analyse impossible : ' + e.message, true); }
+    segBusy = false;
+    if (segAgain) { segAgain = false; runSegment(); }
+  }
+  function updateWarnings() {
+    const w = [];
+    const n = photos.length;
+    if (n && n < 8) w.push('Peu de photos (' + n + ') : le volume sera grossier. 12 à 24 vues réparties sur 360° donnent un bien meilleur résultat.');
+    const missing = photos.map((p, i) => (p.stats && p.stats.area / (p.w * p.h) < 0.004) ? i + 1 : 0).filter(Boolean);
+    if (missing.length) w.push('Objet non détecté sur la photo ' + missing.join(', ') + ' : change le mode de détection ou la sensibilité.');
+    const border = photos.map((p, i) => (p.stats && p.stats.touchesBorder) ? i + 1 : 0).filter(Boolean);
+    if (border.length) w.push('L’objet touche le bord sur la photo ' + border.join(', ') + ' : cette partie sera coupée.');
+    if (photos.some(p => p.aspectOff)) w.push('Certaines photos n’ont pas le même format que la première : elles ont été étirées. Prends toutes les photos dans la même orientation.');
+    if (n > 1) {
+      const angs = photos.map(p => p.angle).sort((a, b) => a - b);
+      let maxGap = 0; for (let i = 0; i < angs.length; i++) { const nx = i + 1 < angs.length ? angs[i + 1] : angs[0] + 360; maxGap = Math.max(maxGap, nx - angs[i]); }
+      if (maxGap > 150) w.push('Les angles laissent un secteur de ' + Math.round(maxGap) + '° sans photo : de ce côté, la forme sera simplement extrudée.');
+      const dup = new Set(angs.map(a => Math.round(a / 10))).size;
+      if (dup < n) w.push('Plusieurs photos ont presque le même angle : elles n’ajoutent pas d’information. Vérifie les angles sous les vignettes.');
+    }
+    if (ui.capture.value === 'turntable') {
+      const areas = photos.map(p => p.stats ? p.stats.area : 0).filter(a => a > 0);
+      if (areas.length > 3) { const mn = Math.min(...areas), mx = Math.max(...areas); if (mx > 4 * mn) w.push('La taille de la silhouette varie beaucoup d’une photo à l’autre : si le téléphone a bougé, choisis « À main levée ».'); }
+    }
+    ui.warnings.innerHTML = w.map(t => '<li>' + t + '</li>').join('');
+  }
+  function syncDetectUI() {
+    ui.fieldFocal.hidden = ui.capture.value !== 'handheld';
+    ui.fieldElev.hidden = ui.capture.value !== 'handheld';
+    ui.fieldBg.hidden = ui.detect.value !== 'uniform';
+    ui.shadows.parentElement.hidden = ui.detect.value !== 'uniform';
+    if (ui.detect.value !== 'ml') ui.detectStatus.textContent = 'Mode ' + detectLabels[ui.detect.value] + '. Les vignettes montrent en couleur la silhouette retenue ; ajuste la sensibilité si besoin.';
+    else if (ml.state === 'ready') ui.detectStatus.textContent = 'Détecteur prêt. Les vignettes montrent en couleur la silhouette retenue ; ajuste la sensibilité si besoin.';
+  }
+
+  // ---------- Reconstruction ----------
+  async function reconstruct() {
+    if (photos.length < 3 || running) return;
+    if (ui.detect.value === 'ml' && photos.some(p => !p.ml)) { const ok = await mlDetectMissing(); if (!ok && ui.detect.value === 'ml') return; }
+    running = true; ui.run.disabled = true; ui.dl.disabled = true; ui.btnColor.disabled = true; setBar(0.02);
+    const stages = { segment: [0, 0.15, 'Détection des silhouettes'], pose: [0.15, 0.55, 'Calcul de l\u2019angle de vue'], carve: [0.55, 0.8, 'Sculpture du volume'], mesh: [0.8, 1, 'Maillage et lissage'] };
+    setStatus('Préparation…');
+    const t0 = performance.now();
+    try {
+      const r = await call({ type: 'reconstruct', images: imagesForWorker(), params: applyMeasures(params()) },
+        (stage, f) => { const s = stages[stage]; setBar(s[0] + (s[1] - s[0]) * f); setStatus(s[2] + '… ' + Math.round(100 * (s[0] + (s[1] - s[0]) * f)) + ' %'); });
+      result = r.result;
+      r.result.views.forEach((v, i) => { const p = photos[i]; if (p) { p.stats = v.stats; } });
+      viewer.setMesh(result.positions, result.normals, result.indices, result.dims, result.colors);
+      viewer.useColors(ui.showColors.checked && !!result.colors);
+      ui.overlay.hidden = true; ui.badge.hidden = false; ui.badge.textContent = (exampleLoaded ? 'exemple · ' : '') + result.grid.join('×') + ' voxels';
+      ui.stats.hidden = false;
+      $('st-dims').textContent = result.dims.map(d => d.toFixed(1)).join(' × ') + ' mm';
+      $('st-vol').textContent = result.volumeMm3 > 1e6 ? (result.volumeMm3 / 1e6).toLocaleString('fr-FR', { maximumFractionDigits: 1 }) + ' dm³' : (result.volumeMm3 / 1000).toLocaleString('fr-FR', { maximumFractionDigits: 1 }) + ' cm³';
+      $('st-tris').textContent = result.triangles.toLocaleString('fr-FR');
+      $('st-size').textContent = fmtBytes(84 + 50 * result.triangles);
+      const rej = (result.rejected || []).map(i => i + 1);
+      const pz = result.pose; const poseTxt = pz ? ' Angle de vue ' + (pz.sensor ? 'mesuré par le téléphone (moyenne)' : pz.solved ? 'calculé' : 'supposé') + ' : ' + pz.elev + '°.' + (!pz.solved && ui.elev.value === 'auto' ? ' Indique aussi la largeur réelle pour que l\u2019application le calcule.' : '') : '';
+      setBar(1); setStatus('Pièce reconstruite en ' + ((performance.now() - t0) / 1000).toFixed(1) + ' s à partir de ' + (photos.length - rej.length) + ' vues (' + detectLabels[ui.detect.value] + ').' + poseTxt + (rej.length ? ' Image' + (rej.length > 1 ? 's' : '') + ' écartée' + (rej.length > 1 ? 's' : '') + ' car incohérente' + (rej.length > 1 ? 's' : '') + ' avec les autres : ' + rej.join(', ') + '.' : ''));
+      ui.dl.disabled = false; ui.btnColor.disabled = !result.colors;
+      $('print-box').hidden = false; $('print-h').value = result.dims[2].toFixed(1); updatePrint();
+    } catch (e) { setStatus(e.message, true); setBar(0); }
+    running = false; ui.run.disabled = photos.length < 3;
+  }
+  function fmtBytes(b) { return b > 1048576 ? (b / 1048576).toFixed(1) + ' Mo' : Math.round(b / 1024) + ' ko'; }
+  function safeName() { return (ui.fname.value || 'objet').trim().replace(/[^\w\-àâäéèêëîïôöùûüç ]+/gi, '').replace(/\s+/g, '_').slice(0, 60) || 'objet'; }
+
+  // ---------- Export ----------
+  function saveLink(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    toast(filename + ' téléchargé');
+  }
+  let dlBusy = false;
+  async function download() {
+    if (!result || dlBusy) return;
+    dlBusy = true; ui.dl.disabled = true;
+    try {
+      const name = safeName();
+      const r = await call({ type: 'stl', positions: scaledPositions(), indices: result.indices, name });
+      const stl = new Uint8Array(r.stl);
+      if (inArtifact) {
+        const dl = await window.claude.use('downloads');
+        if (!dl) { saveLink(new Blob([stl], { type: 'model/stl' }), name + '.stl'); return; }
+        const zip = E.buildZip(name + '.stl', stl);
+        try { await dl.save({ filename: name + '.zip', data: new Blob([zip]) }); toast('Archive enregistrée : décompresse-la pour obtenir ' + name + '.stl'); }
+        catch (e) { if (e && e.code === 'declined') setStatus('Enregistrement annulé.'); else setStatus('Enregistrement impossible (' + ((e && e.code) || 'erreur') + ').', true); }
+      } else {
+        const url = URL.createObjectURL(new Blob([stl], { type: 'model/stl' }));
+        const a = document.createElement('a'); a.href = url; a.download = name + '.stl'; document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+        toast(name + '.stl téléchargé');
+      }
+    } catch (e) { setStatus('Export impossible : ' + e.message, true); }
+    dlBusy = false; ui.dl.disabled = !result;
+  }
+  // ---------- Taille d'impression (figurine, réduction, agrandissement) ----------
+  function printFactor() { if (!result) return 1; const h = +$('print-h').value; return h > 0 ? h / result.dims[2] : 1; }
+  function updatePrint() {
+    if (!result) return;
+    const f = printFactor(), d = result.dims.map(x => x * f);
+    const ratio = f >= 1 ? (f === 1 ? '1:1' : (f.toLocaleString('fr-FR', { maximumFractionDigits: 2 }) + ':1')) : ('1:' + (1 / f).toLocaleString('fr-FR', { maximumFractionDigits: 1 }));
+    $('print-info').textContent = 'Échelle ' + ratio + ' · pièce imprimée : ' + d.map(x => x.toFixed(1)).join(' × ') + ' mm';
+    $('st-dims').textContent = d.map(x => x.toFixed(1)).join(' × ') + ' mm';
+    const vol = result.volumeMm3 * f * f * f;
+    $('st-vol').textContent = vol > 1e6 ? (vol / 1e6).toLocaleString('fr-FR', { maximumFractionDigits: 1 }) + ' dm³' : (vol / 1000).toLocaleString('fr-FR', { maximumFractionDigits: 1 }) + ' cm³';
+  }
+  function scaledPositions() { const f = printFactor(); if (Math.abs(f - 1) < 1e-6) return result.positions; const out = new Float32Array(result.positions.length); for (let i = 0; i < out.length; i++) out[i] = result.positions[i] * f; return out; }
+
+  let colBusy = false;
+  async function downloadColor() {
+    if (!result || !result.colors || colBusy) return;
+    colBusy = true; ui.btnColor.disabled = true;
+    try {
+      const name = safeName();
+      const r = await call({ type: 'color-export', positions: scaledPositions(), indices: result.indices, colors: result.colors, name });
+      const zip = new Uint8Array(r.zip);
+      if (inArtifact) {
+        const dl = await window.claude.use('downloads');
+        if (!dl) { saveLink(new Blob([zip], { type: 'application/zip' }), name + '_couleur.zip'); return; }
+        try { await dl.save({ filename: name + '_couleur.zip', data: new Blob([zip]) }); toast('Archive enregistrée : ' + name + '.ply et ' + name + '.obj'); }
+        catch (e) { if (e && e.code === 'declined') setStatus('Enregistrement annulé.'); else setStatus('Enregistrement impossible (' + ((e && e.code) || 'erreur') + ').', true); }
+      } else {
+        const url = URL.createObjectURL(new Blob([zip], { type: 'application/zip' }));
+        const a = document.createElement('a'); a.href = url; a.download = name + '_couleur.zip'; document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+        toast(name + '_couleur.zip téléchargé');
+      }
+    } catch (e) { setStatus('Export couleur impossible : ' + e.message, true); }
+    colBusy = false; ui.btnColor.disabled = !(result && result.colors);
+  }
+  ui.exportNote.textContent = inArtifact
+    ? 'STL : forme seule, en millimètres, Z vers le haut. Modèle en couleur : PLY et OBJ avec la couleur de chaque sommet, pour Blender, MeshLab ou une imprimante multicolore. Ici les fichiers sont livrés en archive .zip.'
+    : 'STL : forme seule, en millimètres, Z vers le haut. Modèle en couleur : PLY et OBJ avec la couleur de chaque sommet, pour Blender, MeshLab ou une imprimante multicolore.';
+
+  // ---------- Exemple synthétique : une fusée jouet à trois ailerons ----------
+  function buildExample() {
+    const N = 16, W = 480, H = 360;
+    const cx = 232, cy = 300; // axe légèrement décalé du centre image pour tester le recentrage
+    const inside = (x, y, z) => { // y vers le haut, en pixels
+      const r = Math.hypot(x, z);
+      if (y >= 0 && y <= 150 && r <= 24) return true;                       // corps
+      if (y > 150 && y <= 200 && r <= 24 * (1 - (y - 150) / 50) + 1) return true; // ogive
+      if (y >= 150 && y <= 160 && r <= 27) return true;                    // bague
+      if (y >= -6 && y < 0 && r <= 14) return true;                        // tuyère
+      for (let k = 0; k < 3; k++) {                                        // ailerons
+        const a = k * 2 * Math.PI / 3; const ax = x * Math.cos(a) + z * Math.sin(a), az = -x * Math.sin(a) + z * Math.cos(a);
+        if (Math.abs(az) <= 3 && ax > 0 && y >= 0 && y <= 55 && ax <= 24 + 28 * (1 - y / 55)) return true;
+      }
+      return false;
+    };
+    const pts = [];
+    const st = 1.6;
+    for (let y = -8; y <= 202; y += st) for (let x = -56; x <= 56; x += st) for (let z = -56; z <= 56; z += st) {
+      if (!inside(x, y, z)) continue;
+      if (inside(x + st, y, z) && inside(x - st, y, z) && inside(x, y + st, z) && inside(x, y - st, z) && inside(x, y, z + st) && inside(x, y, z - st)) continue;
+      pts.push(x, y, z);
+    }
+    const out = [];
+    for (let i = 0; i < N; i++) {
+      const th = 2 * Math.PI * i / N, c = Math.cos(th), s = Math.sin(th);
+      const cv = document.createElement('canvas'); cv.width = W; cv.height = H; const g = cv.getContext('2d');
+      const grad = g.createLinearGradient(0, 0, 0, H); grad.addColorStop(0, '#ebe7df'); grad.addColorStop(1, '#d9d3c7'); g.fillStyle = grad; g.fillRect(0, 0, W, H);
+      g.fillStyle = 'rgba(70,60,50,0.18)'; g.beginPath(); g.ellipse(cx + 16, cy + 4, 60, 12, 0, 0, Math.PI * 2); g.fill();
+      const order = [];
+      for (let p = 0; p < pts.length; p += 3) { const x = pts[p], z = pts[p + 2]; order.push([x * c + z * s, pts[p + 1], -x * s + z * c]); }
+      order.sort((a, b) => a[2] - b[2]);
+      for (const q of order) {
+        const shade = 0.55 + 0.45 * ((q[2] + 56) / 112);
+        const red = q[1] > 150 || q[1] < 55;
+        g.fillStyle = red ? 'rgb(' + Math.round(175 * shade) + ',' + Math.round(55 * shade) + ',' + Math.round(50 * shade) + ')' : 'rgb(' + Math.round(40 * shade) + ',' + Math.round(95 * shade) + ',' + Math.round(165 * shade) + ')';
+        g.fillRect(cx + q[0] - 1.6, cy - q[1] - 1.6, 3.4, 3.4);
+      }
+      const id = g.getImageData(0, 0, W, H); const d = id.data;
+      for (let k = 0; k < d.length; k += 4) { const n = (Math.random() - 0.5) * 10; d[k] += n; d[k + 1] += n; d[k + 2] += n; }
+      g.putImageData(id, 0, 0);
+      out.push(cv);
+    }
+    return out;
+  }
+  function loadExample() {
+    clearAll(true);
+    const cvs = buildExample();
+    cvs.forEach((cv, i) => photos.push(makePhoto(cv, 'exemple_' + (i + 1) + '.jpg', i, true)));
+    exampleLoaded = true; ui.height.value = 100; ui.fname.value = 'fusee_exemple';
+    ui.detect.value = 'uniform'; ui.capture.value = 'turntable'; ui.width.value = ''; syncDetectUI();
+    spreadAngles(true);
+    renderThumbs(); setStatus('Exemple chargé : 16 vues synthétiques d’une fusée jouet sur fond uni. Remplace-les par tes photos quand tu veux.');
+    return runSegment().then(reconstruct);
+  }
+
+  // ---------- Visionneuse WebGL ----------
+  const viewer = (function () {
+    const canvas = $('gl');
+    const gl = canvas.getContext('webgl2', { antialias: true, alpha: false }) || canvas.getContext('webgl', { antialias: true, alpha: false });
+    const api = { setMesh() {}, clear() {}, useColors() {} };
+    if (!gl) { ui.overlay.textContent = 'La vue 3D n’est pas disponible sur cet appareil (WebGL). L’export STL fonctionne quand même.'; return api; }
+    if (!(window.WebGL2RenderingContext && gl instanceof WebGL2RenderingContext)) gl.getExtension('OES_element_index_uint');
+    const vs = 'attribute vec3 aPos; attribute vec3 aNrm; attribute vec3 aCol; uniform mat4 uMVP; varying vec3 vN; varying vec3 vC; void main(){ gl_Position = uMVP*vec4(aPos,1.0); vN = aNrm; vC = aCol; }';
+    const fs = 'precision mediump float; varying vec3 vN; varying vec3 vC; uniform vec3 uColor; uniform vec3 uLight; uniform float uFlat; uniform float uUseCol; void main(){ vec3 n = normalize(vN); if(!gl_FrontFacing) n = -n; float d = max(dot(n, normalize(uLight)), 0.0); float d2 = max(dot(n, normalize(vec3(-0.6,-0.4,0.3))), 0.0)*0.3; float l = mix(0.28 + 0.62*d + d2, 1.0, uFlat); float lc = 0.88 + 0.14*d + d2*0.2; vec3 base = mix(uColor*l, vC*lc, uUseCol); gl_FragColor = vec4(base, 1.0); }';
+    const sh = (t, s) => { const o = gl.createShader(t); gl.shaderSource(o, s); gl.compileShader(o); return o; };
+    const prog = gl.createProgram(); gl.attachShader(prog, sh(gl.VERTEX_SHADER, vs)); gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, fs)); gl.linkProgram(prog); gl.useProgram(prog);
+    const aPos = gl.getAttribLocation(prog, 'aPos'), aNrm = gl.getAttribLocation(prog, 'aNrm'), aCol = gl.getAttribLocation(prog, 'aCol');
+    const uUseCol = gl.getUniformLocation(prog, 'uUseCol'); const bufC = gl.createBuffer(); let hasCol = false, useCol = false;
+    const uMVP = gl.getUniformLocation(prog, 'uMVP'), uColor = gl.getUniformLocation(prog, 'uColor'), uLight = gl.getUniformLocation(prog, 'uLight'), uFlat = gl.getUniformLocation(prog, 'uFlat');
+    const bufP = gl.createBuffer(), bufN = gl.createBuffer(), bufI = gl.createBuffer(), bufG = gl.createBuffer();
+    let nIdx = 0, nGrid = 0, has = false;
+    let yaw = 0.7, pitch = 0.5, dist = 200, target = [0, 0, 0], autoRot = !reduceMotion, dirty = true;
+    gl.enable(gl.DEPTH_TEST);
+
+    function cssColor(name) {
+      const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+      const c = document.createElement('canvas').getContext('2d'); c.fillStyle = v || '#888'; const s = c.fillStyle;
+      if (s[0] === '#') return [parseInt(s.slice(1, 3), 16) / 255, parseInt(s.slice(3, 5), 16) / 255, parseInt(s.slice(5, 7), 16) / 255];
+      const m = s.match(/[\d.]+/g); return m ? [m[0] / 255, m[1] / 255, m[2] / 255] : [0.5, 0.5, 0.5];
+    }
+    let colors = null, colorTick = 0;
+    function refreshColors() { colors = { bg: cssColor('--viewer-bg'), mesh: cssColor('--mesh'), grid: cssColor('--grid') }; }
+
+    // matrices (colonnes)
+    function perspective(fovy, asp, n, f) { const t = 1 / Math.tan(fovy / 2); return [t / asp, 0, 0, 0, 0, t, 0, 0, 0, 0, (f + n) / (n - f), -1, 0, 0, 2 * f * n / (n - f), 0]; }
+    function lookAt(e, c, up) {
+      let zx = e[0] - c[0], zy = e[1] - c[1], zz = e[2] - c[2]; let l = Math.hypot(zx, zy, zz) || 1; zx /= l; zy /= l; zz /= l;
+      let xx = up[1] * zz - up[2] * zy, xy = up[2] * zx - up[0] * zz, xz = up[0] * zy - up[1] * zx; l = Math.hypot(xx, xy, xz) || 1; xx /= l; xy /= l; xz /= l;
+      const yx = zy * xz - zz * xy, yy = zz * xx - zx * xz, yz = zx * xy - zy * xx;
+      return [xx, yx, zx, 0, xy, yy, zy, 0, xz, yz, zz, 0, -(xx * e[0] + xy * e[1] + xz * e[2]), -(yx * e[0] + yy * e[1] + yz * e[2]), -(zx * e[0] + zy * e[1] + zz * e[2]), 1];
+    }
+    function mul(a, b) { const o = new Array(16); for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) { let s = 0; for (let k = 0; k < 4; k++) s += a[k * 4 + j] * b[i * 4 + k]; o[i * 4 + j] = s; } return o; }
+
+    function resize() {
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const w = Math.max(1, Math.round(canvas.clientWidth * dpr)), h = Math.max(1, Math.round(canvas.clientHeight * dpr));
+      if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; dirty = true; }
+    }
+    function draw() {
+      resize();
+      if (!colors || (++colorTick % 30) === 0) refreshColors();
+      gl.viewport(0, 0, canvas.width, canvas.height);
+      gl.clearColor(colors.bg[0], colors.bg[1], colors.bg[2], 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+      if (!has) return;
+      const eye = [target[0] + dist * Math.cos(pitch) * Math.sin(yaw), target[1] - dist * Math.cos(pitch) * Math.cos(yaw), target[2] + dist * Math.sin(pitch)];
+      const mvp = mul(perspective(0.7, canvas.width / canvas.height, dist * 0.02, dist * 10), lookAt(eye, target, [0, 0, 1]));
+      gl.uniformMatrix4fv(uMVP, false, new Float32Array(mvp));
+      gl.uniform3f(uLight, 0.5, -0.7, 0.8);
+      // grille
+      gl.uniform1f(uFlat, 1); gl.uniform3fv(uColor, colors.grid);
+      gl.disableVertexAttribArray(aNrm); gl.vertexAttrib3f(aNrm, 0, 0, 1); gl.uniform1f(uUseCol, 0);
+      if (aCol >= 0) { gl.disableVertexAttribArray(aCol); gl.vertexAttrib3f(aCol, 0.7, 0.7, 0.7); }
+      gl.bindBuffer(gl.ARRAY_BUFFER, bufG); gl.enableVertexAttribArray(aPos); gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, 0, 0);
+      gl.drawArrays(gl.LINES, 0, nGrid);
+      // pièce
+      gl.uniform1f(uFlat, 0); gl.uniform3fv(uColor, colors.mesh); gl.uniform1f(uUseCol, (useCol && hasCol) ? 1 : 0);
+      if (aCol >= 0 && hasCol) { gl.bindBuffer(gl.ARRAY_BUFFER, bufC); gl.enableVertexAttribArray(aCol); gl.vertexAttribPointer(aCol, 3, gl.UNSIGNED_BYTE, true, 0, 0); }
+      gl.bindBuffer(gl.ARRAY_BUFFER, bufP); gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, 0, 0);
+      gl.bindBuffer(gl.ARRAY_BUFFER, bufN); gl.enableVertexAttribArray(aNrm); gl.vertexAttribPointer(aNrm, 3, gl.FLOAT, false, 0, 0);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, bufI);
+      gl.drawElements(gl.TRIANGLES, nIdx, gl.UNSIGNED_INT, 0);
+    }
+    function loop() { if (autoRot && has) { yaw += 0.004; dirty = true; } if (dirty) { dirty = false; draw(); } requestAnimationFrame(loop); }
+    requestAnimationFrame(loop);
+    window.addEventListener('resize', () => { dirty = true; });
+    if (window.matchMedia) window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { colors = null; dirty = true; });
+    new MutationObserver(() => { colors = null; dirty = true; }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+    // interactions
+    const ptrs = new Map(); let lastPinch = 0;
+    canvas.addEventListener('pointerdown', (e) => { canvas.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, [e.clientX, e.clientY]); autoRot = false; if (ptrs.size === 2) { const a = [...ptrs.values()]; lastPinch = Math.hypot(a[0][0] - a[1][0], a[0][1] - a[1][1]); } });
+    canvas.addEventListener('pointermove', (e) => {
+      if (!ptrs.has(e.pointerId)) return;
+      const prev = ptrs.get(e.pointerId); ptrs.set(e.pointerId, [e.clientX, e.clientY]);
+      if (ptrs.size === 1) { yaw += (e.clientX - prev[0]) * 0.01; pitch = Math.max(-1.5, Math.min(1.5, pitch + (e.clientY - prev[1]) * 0.01)); dirty = true; }
+      else if (ptrs.size === 2) { const a = [...ptrs.values()]; const d = Math.hypot(a[0][0] - a[1][0], a[0][1] - a[1][1]); if (lastPinch) { dist *= lastPinch / d; dirty = true; } lastPinch = d; }
+    });
+    const up = (e) => { ptrs.delete(e.pointerId); lastPinch = 0; };
+    canvas.addEventListener('pointerup', up); canvas.addEventListener('pointercancel', up);
+    canvas.addEventListener('wheel', (e) => { e.preventDefault(); dist *= Math.exp(e.deltaY * 0.0012); dirty = true; }, { passive: false });
+
+    api.useColors = function (on) { useCol = !!on; dirty = true; };
+    api.setMesh = function (pos, nrm, idx, dims, cols) {
+      hasCol = !!cols; if (cols) { gl.bindBuffer(gl.ARRAY_BUFFER, bufC); gl.bufferData(gl.ARRAY_BUFFER, cols, gl.STATIC_DRAW); }
+      gl.bindBuffer(gl.ARRAY_BUFFER, bufP); gl.bufferData(gl.ARRAY_BUFFER, pos, gl.STATIC_DRAW);
+      gl.bindBuffer(gl.ARRAY_BUFFER, bufN); gl.bufferData(gl.ARRAY_BUFFER, nrm, gl.STATIC_DRAW);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, bufI); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
+      nIdx = idx.length;
+      const size = Math.max(dims[0], dims[1], dims[2]);
+      let step = 10; if (size > 300) step = 50; else if (size > 120) step = 20; else if (size < 25) step = 2; else if (size < 60) step = 5;
+      const half = Math.ceil(size * 0.8 / step) * step; const g = [];
+      for (let v = -half; v <= half; v += step) { g.push(-half, v, 0, half, v, 0, v, -half, 0, v, half, 0); }
+      gl.bindBuffer(gl.ARRAY_BUFFER, bufG); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(g), gl.STATIC_DRAW); nGrid = g.length / 3;
+      target = [0, 0, dims[2] / 2]; dist = size * 2.1; has = true; dirty = true; autoRot = !reduceMotion;
+    };
+    api.clear = function () { has = false; dirty = true; };
+    return api;
+  })();
+
+  // ---------- Événements ----------
+  $('btn-example').addEventListener('click', () => loadExample());
+  $('btn-scan').addEventListener('click', openScan);
+  $('btn-get-app').addEventListener('click', getApp);
+  $('scan-finish').addEventListener('click', () => closeScan(true));
+  $('scan-cancel').addEventListener('click', () => closeScan(false));
+  $('print-h').addEventListener('input', updatePrint);
+  $('print-real').addEventListener('click', () => { if (result) { $('print-h').value = result.dims[2].toFixed(1); updatePrint(); } });
+  $('print-50').addEventListener('click', () => { $('print-h').value = 50; updatePrint(); });
+  $('print-100').addEventListener('click', () => { $('print-h').value = 100; updatePrint(); });
+  ui.btnColor.addEventListener('click', downloadColor);
+  ui.showColors.addEventListener('change', () => viewer.useColors(ui.showColors.checked && !!(result && result.colors)));
+  $('btn-spread').addEventListener('click', () => { spreadAngles(true); renderThumbs(); updateWarnings(); });
+  ui.clear.addEventListener('click', () => clearAll());
+  ui.run.addEventListener('click', reconstruct);
+  ui.dl.addEventListener('click', download);
+  ui.threshold.addEventListener('input', () => { ui.thresholdOut.textContent = ui.threshold.value; scheduleSegment(); });
+  ui.smooth.addEventListener('input', () => { ui.smoothOut.textContent = ui.smooth.value; });
+  ui.shadows.addEventListener('change', scheduleSegment);
+  ui.detect.addEventListener('change', () => {
+    syncDetectUI();
+    if (ui.detect.value === 'ml' && ml.state === 'failed') { ml.state = 'idle'; ml.promise = null; ml.error = null; }
+    refreshDetection();
+  });
+  ui.capture.addEventListener('change', () => { syncDetectUI(); updateWarnings(); });
+  ui.bgMode.addEventListener('change', () => { ui.bgColor.hidden = ui.bgMode.value !== 'manual'; scheduleSegment(); });
+  ui.bgColor.addEventListener('input', scheduleSegment);
+  ui.sortTime.addEventListener('change', () => { if (ui.sortTime.checked && !exampleLoaded) { photos.sort((a, b) => a.time - b.time); spreadAngles(false); renderThumbs(); } });
+  document.body.addEventListener('dragover', (e) => { e.preventDefault(); });
+  document.body.addEventListener('drop', (e) => { e.preventDefault(); if (e.dataTransfer && e.dataTransfer.files.length) addFiles(e.dataTransfer.files); });
+
+  // Démarrage : exemple chargé pour montrer le résultat attendu, détecteur chargé en arrière-plan
+  let crashedBefore = false;
+  const CRASH_MSG = 'La dernière fois, le détecteur automatique a interrompu la page (mémoire du téléphone insuffisante). Le mode couleurs sera utilisé. Pour réessayer, choisis « Automatique » dans Détection.';
+  if (flagGet()) {
+    crashedBefore = true; flagSet(false);
+    ml.state = 'failed'; ml.promise = Promise.resolve(false);
+    ml.error = 'le chargement précédent a interrompu la page, sans doute par manque de mémoire';
+  }
+  renderThumbs(); syncDetectUI();
+  appReady = true;
+  loadStatus(crashedBefore ? CRASH_MSG : worker ? '' : 'Mode simplifié : le moteur en arrière-plan n\u2019a pas démarré, les calculs se font dans la page.');
+  if (pendingVideo) { const fv = pendingVideo; pendingVideo = null; addVideo(fv); }
+  else if (pendingFiles) { const fl = pendingFiles; pendingFiles = null; addFiles(fl); }
+  else setTimeout(() => { if (!photos.length) loadExample().catch(e => setStatus(e.message, true)); }, 50);
+})();
+</script></body></html>
