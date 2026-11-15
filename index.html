@@ -439,7 +439,8 @@ select.mini { font: inherit; padding: 4px 8px; border: 1px solid var(--line); bo
     if (opts.mode === 'complex') return segmentComplex(rgba, w, h, opts);
     if (opts.mode === 'ml' && opts.ml) {
       const level = Math.min(0.9, Math.max(0.1, 0.5 * (opts.threshold == null ? 40 : opts.threshold) / 40));
-      const mask = maskFromSaliency(opts.ml.sal, ML.size, w, h, level, opts.ml.rect);
+      const mask = opts.refine === false ? maskFromSaliency(opts.ml.sal, ML.size, w, h, level, opts.ml.rect)
+        : refineWithColor(rgba, w, h, opts.ml.sal, ML.size, opts.ml.rect, level);
       return { mask, bg: null, stats: maskStats(mask, w, h) };
     }
     const bg = opts.bg || estimateBackground(rgba, w, h);
@@ -549,7 +550,7 @@ select.mini { font: inherit; padding: 4px 8px; border: 1px solid var(--line); bo
       if (x < left) left = x; if (x > right) right = x;
       if (y < top) top = y; if (y > bottom) bottom = y;
     }
-    return { area: n, cu: n ? su / n : w / 2, left, right, top, bottom, touchesBorder: n > 0 && (left === 0 || top === 0 || right === w - 1 || bottom === h - 1) };
+    return { area: n, cu: n ? su / n : w / 2, left, right, top, bottom, touchesBorder: n > 0 && (left <= 3 || top <= 3 || right >= w - 4 || bottom >= h - 4) };   // marge : le nettoyage du contour peut décoller la silhouette du bord
   }
 
   // ---------- Caméras ----------
@@ -590,8 +591,13 @@ select.mini { font: inherit; padding: 4px 8px; border: 1px solid var(--line); bo
         const ang = solveAim(bet, ta, tb);
         const psi = gam - ang[0], phi = ang[1];
         const F2 = [Math.sin(psi) * Math.cos(phi), Math.sin(phi), Math.cos(psi) * Math.cos(phi)];
-        const R2 = [Math.cos(psi), 0, -Math.sin(psi)];
-        const Dn2 = cross3(F2, R2);
+        let R2 = [Math.cos(psi), 0, -Math.sin(psi)];
+        let Dn2 = cross3(F2, R2);
+        if (v.roll) {
+          // téléphone penché sur le côté : on tourne l'image autour de l'axe optique (mesure des capteurs)
+          const sr = Math.max(-0.9, Math.min(0.9, Math.sin(v.roll) / Math.max(0.2, Math.cos(phi)))), cr = Math.sqrt(1 - sr * sr);
+          const Rn = lin2(cr, R2, -sr, Dn2), Dnn = lin2(sr, R2, cr, Dn2); R2 = Rn; Dn2 = Dnn;
+        }
         cams.push({
           project(X, Y, Z) { const rx = X - C[0], ry = Y - C[1], rz = Z - C[2]; const zc = rx * F2[0] + ry * F2[1] + rz * F2[2]; return [cx + f * (rx * R2[0] + ry * R2[1] + rz * R2[2]) / zc, cy + f * (rx * Dn2[0] + ry * Dn2[1] + rz * Dn2[2]) / zc, zc]; },
           forward(X, Y, Z, out) { const rx = X - C[0], ry = Y - C[1], rz = Z - C[2]; const l = Math.hypot(rx, ry, rz) || 1; out[0] = rx / l; out[1] = ry / l; out[2] = rz / l; },
@@ -685,7 +691,7 @@ select.mini { font: inherit; padding: 4px 8px; border: 1px solid var(--line); bo
     for (let vi = 0; vi < n; vi++) {
       const view = views[vi], pr = cam.cams[vi].project, mask = view.mask, st = view.stats;
       // hors de l'image : inconnu seulement du côté où la silhouette touche le bord (objet coupé) ; sinon c'est vide
-      const uL = unknownOutside && st.left <= 0, uR = unknownOutside && st.right >= w - 1, uT = unknownOutside && st.top <= 0, uB = unknownOutside && st.bottom >= h - 1;
+      const uL = unknownOutside && st.left <= 3, uR = unknownOutside && st.right >= w - 4, uT = unknownOutside && st.top <= 3, uB = unknownOutside && st.bottom >= h - 4;
       for (let i = 1; i < nx - 1; i++) {
         const X = x0 + i * s;
         for (let k = 1; k < nz - 1; k++) {
@@ -697,7 +703,7 @@ select.mini { font: inherit; padding: 4px 8px; border: 1px solid var(--line); bo
             const u = Math.round(p[0]), v = Math.round(p[1]);
             let miss;
             if (p[2] <= 0) miss = !unknownOutside;
-            else if (u < 0) miss = !uL; else if (u >= w) miss = !uR; else if (v < 0) miss = !uT; else if (v >= h) miss = !uB;
+            else if (u < (uL ? 4 : 0)) miss = !uL; else if (u >= w - (uR ? 4 : 0)) miss = !uR; else if (v < (uT ? 4 : 0)) miss = !uT; else if (v >= h - (uB ? 4 : 0)) miss = !uB;
             else miss = !mask[v * w + u];
             if (miss && ++fails[base + j] > tol) occ[base + j] = 0;
           }
@@ -1058,7 +1064,7 @@ select.mini { font: inherit; padding: 4px 8px; border: 1px solid var(--line); bo
     let dimsXY = [(maxX - minX) * scale, (maxY - minY) * scale];
     if (widthMm > 0 && measure !== 'width') {
       // deux mesures connues : petite correction horizontale pour retomber exactement sur la largeur donnée
-      const fx = Math.max(0.8, Math.min(1.25, widthMm / Math.max(1e-6, Math.max(dimsXY[0], dimsXY[1]))));
+      const fx = Math.max(0.6, Math.min(1.6, widthMm / Math.max(1e-6, Math.max(dimsXY[0], dimsXY[1]))));   // les deux mesures fixent les proportions
       for (let i = 0; i < nv; i++) { out[3 * i] *= fx; out[3 * i + 1] *= fx; }
       dimsXY = [dimsXY[0] * fx, dimsXY[1] * fx];
     }
@@ -1301,6 +1307,46 @@ select.mini { font: inherit; padding: 4px 8px; border: 1px solid var(--line); bo
     fillHoles(mask, w, h);
     return mask;
   }
+  // Affinage du détourage : le réseau dit où est l'objet, les couleurs de l'image précisent ses bords.
+  // Score = avis du réseau (log-odds) + rapport de vraisemblance des couleurs objet / fond, lissé localement.
+  function refineWithColor(rgba, w, h, sal, S, rect, level) {
+    rect = rect || [0, 0, w, h];
+    const n = w * h, prob = new Float32Array(n);
+    const rw = rect[2] - rect[0], rh = rect[3] - rect[1];
+    for (let y = 0; y < h; y++) {
+      const inY = y >= rect[1] && y < rect[3];
+      const fy = (y - rect[1] + 0.5) * S / rh - 0.5; const y0 = Math.min(S - 1, Math.max(0, Math.floor(fy))), y1 = Math.min(S - 1, y0 + 1), ty = Math.min(1, Math.max(0, fy - y0));
+      for (let x = 0; x < w; x++) {
+        if (!inY || x < rect[0] || x >= rect[2]) { prob[y * w + x] = 0; continue; }
+        const fx = (x - rect[0] + 0.5) * S / rw - 0.5; const x0 = Math.min(S - 1, Math.max(0, Math.floor(fx))), x1 = Math.min(S - 1, x0 + 1), tx = Math.min(1, Math.max(0, fx - x0));
+        prob[y * w + x] = (sal[y0 * S + x0] * (1 - tx) + sal[y0 * S + x1] * tx) * (1 - ty) + (sal[y1 * S + x0] * (1 - tx) + sal[y1 * S + x1] * tx) * ty;
+      }
+    }
+    // modèles de couleur à partir des zones sûres
+    const total = NB * NB * NB;
+    let hf = new Float32Array(total), hb = new Float32Array(total), nf = 0, nb = 0;
+    const bins = new Int32Array(n);
+    for (let p = 0, o = 0; p < n; p++, o += 4) {
+      const b = (BIN_LUT[rgba[o]] * NB + BIN_LUT[rgba[o + 1]]) * NB + BIN_LUT[rgba[o + 2]]; bins[p] = b;
+      if (prob[p] > 0.85) { hf[b]++; nf++; } else if (prob[p] < 0.1) { hb[b]++; nb++; }
+    }
+    if (nf < 60 || nb < 60) { const m = new Uint8Array(n); for (let p = 0; p < n; p++) m[p] = prob[p] > level ? 1 : 0; morphOpenClose(m, w, h); keepLargestComponent(m, w, h); fillHoles(m, w, h); return m; }
+    hf = blurHist(hf); hb = blurHist(hb);
+    const L = new Float32Array(n), bias = Math.log(level / (1 - level));
+    for (let p = 0; p < n; p++) {
+      const q = Math.min(0.98, Math.max(0.02, prob[p]));
+      const lml = Math.log(q / (1 - q)) - bias;
+      const lc = Math.log(((hf[bins[p]] + 0.5) / nf) / ((hb[bins[p]] + 0.5) / nb));
+      // loin de l'objet selon le réseau, la couleur ne peut pas à elle seule créer de l'objet
+      L[p] = prob[p] < 0.03 ? -6 : 0.7 * lml + Math.max(-4, Math.min(4, lc));
+    }
+    const sm = boxBlur2D(L, w, h, Math.max(1, Math.round(Math.min(w, h) / 300)));
+    const m = new Uint8Array(n);
+    for (let p = 0; p < n; p++) m[p] = sm[p] > 0 ? 1 : 0;
+    morphOpenClose(m, w, h); keepLargestComponent(m, w, h); fillHoles(m, w, h);
+    return m;
+  }
+
   // deux passes : image entière -> boîte de l'objet -> seconde passe sur la boîte (meilleure résolution)
   async function mlSegmentImage(rgba, w, h) {
     const S = ML.size;
@@ -1316,10 +1362,56 @@ select.mini { font: inherit; padding: 4px 8px; border: 1px solid var(--line); bo
     const sal2 = await mlPredict(resampleRGBA(rgba, w, h, rect, S));
     return { rect, sal: sal2 };
   }
+  // ---------- Recalage fin des vues sur les silhouettes (angle autour, inclinaison, roulis) ----------
+  // Pour chaque vue, on essaie de petites corrections et on garde celle où le volume (sculpté par toutes les vues,
+  // avec une tolérance d'une vue) se superpose le mieux à la silhouette. Les capteurs donnent le point de départ.
+  function refinePoses(views, copts, rounds) {
+    const w = views[0].w, h = views[0].h, K = Math.max(1, Math.round(Math.max(w, h) / 160)), lw = Math.ceil(w / K), lh = Math.ceil(h / K);
+    const lowMask = views.map(v => { const m = new Uint8Array(lw * lh); for (let y = 0; y < h; y += K) for (let x = 0; x < w; x += K) if (v.mask[y * w + x]) m[(y / K | 0) * lw + (x / K | 0)] = 1; return m; });
+    const D2R = Math.PI / 180;
+    views.forEach(v => { v.angle0 = v.angle; v.pitch0 = v.pitch; v.roll0 = v.roll || 0; v.elev0 = v.elev; });
+    for (let r = 0; r < rounds; r++) {
+      const hull = carve(views, 48, null, Object.assign({}, copts, { tolerance: 1 }));
+      const pts = []; const { occ, nx, ny, nz, voxel: s, x0, y0, z0 } = hull;
+      for (let i = 0; i < nx; i++) for (let k = 0; k < nz; k++) { const base = (i * nz + k) * ny; for (let j = 0; j < ny; j++) if (occ[base + j]) pts.push(x0 + i * s, y0 + j * s, z0 + k * s); }
+      if (pts.length < 60) return;
+      const step = Math.max(1, Math.floor(pts.length / 3 / 5000));
+      const fpx = (copts.focal || 0.75) * Math.max(w, h);
+      const score = (v, vi) => {
+        const cam = buildCameras([v], copts).cams[0], proj = new Uint8Array(lw * lh);
+        for (let q = 0; q < pts.length; q += 3 * step) {
+          const p = cam.project(pts[q], pts[q + 1], pts[q + 2]); if (p[2] <= 0) continue;
+          const rr = Math.max(0, Math.round(0.55 * fpx * s / p[2] / K)), ux = Math.round(p[0] / K), vy = Math.round(p[1] / K);
+          for (let dy = -rr; dy <= rr; dy++) { const yy = vy + dy; if (yy < 0 || yy >= lh) continue; for (let dx = -rr; dx <= rr; dx++) { const xx = ux + dx; if (xx >= 0 && xx < lw) proj[yy * lw + xx] = 1; } }
+        }
+        let inter = 0, uni = 0; const m = lowMask[vi];
+        for (let t = 0; t < lw * lh; t++) { const a = m[t], b = proj[t]; if (a && b) inter++; if (a || b) uni++; }
+        return uni ? inter / uni : 0;
+      };
+      views.forEach((v, vi) => {
+        let best = score(v, vi);
+        const tryParam = (key, deltas, lim, base0) => {
+          for (const d of deltas) {
+            const old = v[key]; const nv = (old || 0) + d * D2R;
+            if (Math.abs(nv - (base0 || 0)) > lim * D2R) continue;
+            v[key] = nv; const sc = score(v, vi);
+            if (sc > best + 1e-4) best = sc; else v[key] = old;
+          }
+        };
+        // seul l'angle autour de l'objet (gyroscope, qui dérive) est recalé ; l'inclinaison et le roulis
+        // viennent de la gravité et sont fiables : on n'y touche pas (sinon ils se confondent avec la distance)
+        const span = r === 0 ? [-8, 8, -4, 4] : [-3, 3, -1.5, 1.5], keys = copts.refineKeys || (v.pitch != null ? ['angle', 'roll'] : ['angle']);
+        if (keys.includes('angle')) tryParam('angle', span, 25, v.angle0);
+        if (keys.includes('roll')) tryParam('roll', span.map(x => x * 0.75), 12, v.roll0);
+        if (keys.includes('pitch') && v.pitch != null) tryParam('pitch', span.map(x => x * 0.75), 12, v.pitch0);
+      });
+    }
+  }
+
   // ---------- Chaîne « caméra en orbite » : rejet, recalage, sculpture, coupe des chapeaux ----------
   function orbitPipeline(usable0, params, elevDeg, res, fast, progress) {
     let usable = usable0.map(v => Object.assign({}, v, { distScale: 1, aimShift: [0, 0] }));
-    const copts = { camera: 'orbit', focal: params.focal, direction: params.direction || 1, elevation: elevDeg * Math.PI / 180, sweep: 1, tolerance: 0 };
+    const copts = { camera: 'orbit', focal: params.focal, direction: params.direction || 1, elevation: elevDeg * Math.PI / 180, sweep: 1, tolerance: 0, refineKeys: params.refineKeys };
     let rejected = [];
     if (usable.length >= 8) {
       // images incohérentes avec les autres (détourage raté) : on les écarte puis on sculpte strictement
@@ -1332,7 +1424,9 @@ select.mini { font: inherit; padding: 4px 8px; border: 1px solid var(--line); bo
     }
     // recalage de chaque vue : distance et cadrage ajustés pour que l'ébauche se projette comme la silhouette
     const f = (params.focal || 0.75) * Math.max(usable[0].w, usable[0].h);
+    const poseRefine = params.poseRefine !== false && usable.length >= 8 && !fast;
     for (let it = 0; it < (fast ? 2 : 4); it++) {
+      if (poseRefine && (it === 1 || it === 3)) refinePoses(usable, copts, 1);
       const rough = carve(usable, 48, null, Object.assign({}, copts, { tolerance: usable.length >= 8 ? 1 : 0 }));
       const { occ, nx, ny, nz, voxel: s, x0, y0, z0, cams } = rough;
       const pts = [];
@@ -1379,7 +1473,7 @@ select.mini { font: inherit; padding: 4px 8px; border: 1px solid var(--line); bo
     const views = images.map((im, i) => {
       const r = segment(im.data, im.w, im.h, Object.assign({}, params, { ml: im.ml }));
       if (progress) progress('segment', (i + 1) / images.length);
-      return { mask: r.mask, w: im.w, h: im.h, stats: r.stats, bg: r.bg, angle: (im.angleDeg == null) ? (2 * Math.PI * i / images.length) : im.angleDeg * Math.PI / 180, elev: im.elevDeg == null ? null : im.elevDeg * Math.PI / 180, pitch: im.pitchDeg == null ? null : im.pitchDeg * Math.PI / 180, src: i };
+      return { mask: r.mask, w: im.w, h: im.h, stats: r.stats, bg: r.bg, angle: (im.angleDeg == null) ? (2 * Math.PI * i / images.length) : im.angleDeg * Math.PI / 180, elev: im.elevDeg == null ? null : im.elevDeg * Math.PI / 180, pitch: im.pitchDeg == null ? null : im.pitchDeg * Math.PI / 180, roll: im.rollDeg ? im.rollDeg * Math.PI / 180 : 0, src: i };
     });
     let usable = views.filter(v => v.stats.area > 0);
     if (usable.length < 3) throw new Error('Aucun objet détecté sur assez de photos. Change le mode de détection ou la sensibilité.');
@@ -1460,7 +1554,7 @@ select.mini { font: inherit; padding: 4px 8px; border: 1px solid var(--line); bo
   }
   function toFloat(occ) { const f = new Float32Array(occ.length); for (let i = 0; i < occ.length; i++) f[i] = occ[i]; return f; }
 
-  const api = { orbitPipeline, hollowOpenTop, autoPose, hullScore, trimCaps, coverage, estimateBackground, segment, maskFromSaliency, resampleRGBA, buildCameras, colorize, buildPLY, buildOBJ, buildZipMulti, carve, smoothField, surfaceNets, taubinSmooth, finalizeMesh, meshVolume, vertexNormals, buildSTL, buildZip, crc32, reconstruct };
+  const api = { refinePoses, refineWithColor, orbitPipeline, hollowOpenTop, autoPose, hullScore, trimCaps, coverage, estimateBackground, segment, maskFromSaliency, resampleRGBA, buildCameras, colorize, buildPLY, buildOBJ, buildZipMulti, carve, smoothField, surfaceNets, taubinSmooth, finalizeMesh, meshVolume, vertexNormals, buildSTL, buildZip, crc32, reconstruct };
 
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = api;
@@ -1619,7 +1713,7 @@ select.mini { font: inherit; padding: 4px 8px; border: 1px solid var(--line); bo
     else if (Wd > 0) { p.heightMm = Wd; p.measure = 'width'; }
     return p;
   }
-  function imagesForWorker() { const sensor = ui.elev.value === 'sensor' && photos.every(p => p.pitchDeg != null); return photos.map(p => ({ data: p.data, w: p.w, h: p.h, ml: ui.detect.value === 'ml' ? p.ml : null, angleDeg: p.angle, pitchDeg: sensor ? p.pitchDeg : null })); }
+  function imagesForWorker() { const sensor = ui.elev.value === 'sensor' && photos.every(p => p.pitchDeg != null); return photos.map(p => ({ data: p.data, w: p.w, h: p.h, ml: ui.detect.value === 'ml' ? p.ml : null, angleDeg: p.angle, pitchDeg: sensor ? p.pitchDeg : null, rollDeg: sensor && p.sensor ? p.sensor.roll : 0 })); }
 
   // ---------- Détecteur neuronal (ONNX Runtime + U²-Net léger) ----------
   function b64ToBuffer(b64) {
@@ -2136,7 +2230,7 @@ select.mini { font: inherit; padding: 4px 8px; border: 1px solid var(--line); bo
       $('st-tris').textContent = result.triangles.toLocaleString('fr-FR');
       $('st-size').textContent = fmtBytes(84 + 50 * result.triangles);
       const rej = (result.rejected || []).map(i => i + 1);
-      const pz = result.pose; const poseTxt = pz ? ' Angle de vue ' + (pz.sensor ? 'mesuré par le téléphone (moyenne)' : pz.solved ? 'calculé' : 'supposé') + ' : ' + pz.elev + '°.' + (!pz.solved && ui.elev.value === 'auto' ? ' Indique aussi la largeur réelle pour que l\u2019application le calcule.' : '') : '';
+      const pz = result.pose; const poseTxt = pz ? ' Angle de vue ' + (pz.sensor ? 'mesuré par le téléphone (moyenne)' : pz.solved ? 'calculé' : 'supposé') + ' : ' + pz.elev + '°.' + (!pz.solved && ui.elev.value === 'auto' ? ' Indique aussi la largeur réelle pour que l\u2019application le calcule.' : '') + (pz.sensor && !(+ui.width.value > 0) ? ' Pour des proportions exactes, indique aussi la largeur réelle.' : '') : '';
       setBar(1); setStatus('Pièce reconstruite en ' + ((performance.now() - t0) / 1000).toFixed(1) + ' s à partir de ' + (photos.length - rej.length) + ' vues (' + detectLabels[ui.detect.value] + ').' + poseTxt + (rej.length ? ' Image' + (rej.length > 1 ? 's' : '') + ' écartée' + (rej.length > 1 ? 's' : '') + ' car incohérente' + (rej.length > 1 ? 's' : '') + ' avec les autres : ' + rej.join(', ') + '.' : ''));
       ui.dl.disabled = false; ui.btnColor.disabled = !result.colors;
       $('print-box').hidden = false; $('print-h').value = result.dims[2].toFixed(1); updatePrint();
