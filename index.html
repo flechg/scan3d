@@ -146,6 +146,7 @@ select.mini { font: inherit; padding: 4px 8px; border: 1px solid var(--line); bo
           <input id="capture-input" type="file" accept="image/*" capture="environment" hidden>
           <button class="btn ghost" id="btn-example" type="button">Exemple</button>
           <button class="btn ghost" id="btn-clear" type="button" hidden>Tout effacer</button>
+          <button class="btn ghost" id="btn-diag" type="button" hidden>Exporter les données (diagnostic)</button>
         </div>
         <div class="row" style="margin-top:10px">
           <label class="check hint" for="frames" style="margin:0">Images tirées d'une vidéo</label>
@@ -566,9 +567,15 @@ select.mini { font: inherit; padding: 4px 8px; border: 1px solid var(--line); bo
       const f = (opts.focal || 0.75) * Math.max(w, h), cx = w / 2, cy = h / 2;
       const e0 = opts.elevation || 0, sweep = opts.sweep || 1;
       for (const v of views) {
-        const e = v.elev != null ? v.elev : e0;          // plongée mesurée par le téléphone, sinon valeur commune
-        const ce = Math.cos(e), se = Math.sin(e);
         const st = v.stats;
+        let e = v.elev != null ? v.elev : e0;            // plongée de la ligne de visée
+        if (v.pitch != null) {
+          // le téléphone mesure l'inclinaison de son objectif ; la ligne de visée vers l'objet en diffère
+          // de l'écart vertical entre l'objet et le centre de l'image
+          const ta0 = (st.cu - cx) / f, tb0 = ((st.top + st.bottom) / 2 - cy) / f;
+          e = v.pitch + Math.atan(tb0 / Math.sqrt(1 + ta0 * ta0));
+        }
+        const ce = Math.cos(e), se = Math.sin(e);
         const half = Math.max(3, Math.hypot(st.right - st.left + 1, st.bottom - st.top + 1) / 2);
         const D = f / half * (v.distScale || 1);
         const th = dir * sweep * (v.angle == null ? 0 : v.angle);
@@ -1372,7 +1379,7 @@ select.mini { font: inherit; padding: 4px 8px; border: 1px solid var(--line); bo
     const views = images.map((im, i) => {
       const r = segment(im.data, im.w, im.h, Object.assign({}, params, { ml: im.ml }));
       if (progress) progress('segment', (i + 1) / images.length);
-      return { mask: r.mask, w: im.w, h: im.h, stats: r.stats, bg: r.bg, angle: (im.angleDeg == null) ? (2 * Math.PI * i / images.length) : im.angleDeg * Math.PI / 180, elev: im.elevDeg == null ? null : im.elevDeg * Math.PI / 180, src: i };
+      return { mask: r.mask, w: im.w, h: im.h, stats: r.stats, bg: r.bg, angle: (im.angleDeg == null) ? (2 * Math.PI * i / images.length) : im.angleDeg * Math.PI / 180, elev: im.elevDeg == null ? null : im.elevDeg * Math.PI / 180, pitch: im.pitchDeg == null ? null : im.pitchDeg * Math.PI / 180, src: i };
     });
     let usable = views.filter(v => v.stats.area > 0);
     if (usable.length < 3) throw new Error('Aucun objet détecté sur assez de photos. Change le mode de détection ou la sensibilité.');
@@ -1382,8 +1389,8 @@ select.mini { font: inherit; padding: 4px 8px; border: 1px solid var(--line); bo
     if (params.camera === 'orbit') {
       let elev = params.elevationDeg != null && params.elevationDeg >= 0 ? params.elevationDeg : 25;
       let solved = null;
-      const sensor = usable.every(v => v.elev != null);
-      if (sensor) { elev = usable.reduce((a, v) => a + v.elev, 0) / usable.length * 180 / Math.PI; solved = 'capteur'; }
+      const sensor = usable.every(v => v.elev != null || v.pitch != null);
+      if (sensor) { elev = usable.reduce((a, v) => a + (v.pitch != null ? v.pitch : v.elev), 0) / usable.length * 180 / Math.PI; solved = 'capteur'; }
       else if (params.targetRatio > 0) {
         // les deux mesures sont connues : on cherche la plongée qui redonne le bon rapport largeur / hauteur
         const ratioAt = (e) => orbitPipeline(usable, params, e, 64, false).ratio;
@@ -1612,7 +1619,7 @@ select.mini { font: inherit; padding: 4px 8px; border: 1px solid var(--line); bo
     else if (Wd > 0) { p.heightMm = Wd; p.measure = 'width'; }
     return p;
   }
-  function imagesForWorker() { const sensor = ui.elev.value === 'sensor' && photos.every(p => p.elevDeg != null); return photos.map(p => ({ data: p.data, w: p.w, h: p.h, ml: ui.detect.value === 'ml' ? p.ml : null, angleDeg: p.angle, elevDeg: sensor ? p.elevDeg : null })); }
+  function imagesForWorker() { const sensor = ui.elev.value === 'sensor' && photos.every(p => p.pitchDeg != null); return photos.map(p => ({ data: p.data, w: p.w, h: p.h, ml: ui.detect.value === 'ml' ? p.ml : null, angleDeg: p.angle, pitchDeg: sensor ? p.pitchDeg : null })); }
 
   // ---------- Détecteur neuronal (ONNX Runtime + U²-Net léger) ----------
   function b64ToBuffer(b64) {
@@ -1800,7 +1807,7 @@ select.mini { font: inherit; padding: 4px 8px; border: 1px solid var(--line); bo
     const now = performance.now();
     if (scan.lastHead != null) { let d = head - scan.lastHead; d = ((d + 540) % 360) - 180; const dt = Math.max(1, now - scan.lastHeadT) / 1000; scan.angVel = 0.7 * scan.angVel + 0.3 * Math.abs(d) / dt; }
     scan.lastHead = head; scan.lastHeadT = now;
-    scan.ori = { head, elev, roll, t: now }; scan.sensors = true;
+    scan.ori = { head, elev, roll, t: now, alpha: e.alpha, beta: e.beta, gamma: e.gamma, abs: !!e.absolute }; scan.sensors = true;
   }
   function scanAzimuth() { // angle autour de l'objet, sens trigonométrique vu de dessus, 0 = première photo
     if (!scan.ori || scan.h0 == null) return 0;
@@ -1865,7 +1872,8 @@ select.mini { font: inherit; padding: 4px 8px; border: 1px solid var(--line); bo
     const cv = document.createElement('canvas'); cv.width = v.videoWidth; cv.height = v.videoHeight; cv.getContext('2d').drawImage(v, 0, 0);
     if (photos.length && (photos[0].w > photos[0].h) !== (cv.width > cv.height)) return; // orientation changée : on ignore
     const ph = makePhoto(cv, 'scan_' + (scan.shots.length + 1), Date.now());
-    ph.angle = Math.round(azimuth); ph.angleEdited = true; if (elev != null) ph.elevDeg = Math.round(elev * 10) / 10;
+    ph.angle = Math.round(azimuth); ph.angleEdited = true; if (elev != null) ph.pitchDeg = Math.round(elev * 10) / 10;
+    if (scan.ori) ph.sensor = { alpha: scan.ori.alpha, beta: scan.ori.beta, gamma: scan.ori.gamma, head: scan.ori.head, roll: scan.ori.roll, azimuth: azimuth, absolute: scan.ori.abs, t: Date.now() };
     photos.push(ph); scan.shots.push(ph); scan.lastShot = performance.now();
     scan.flash = performance.now();
     try { if (navigator.vibrate) navigator.vibrate(25); } catch (e) {}
@@ -2012,6 +2020,7 @@ select.mini { font: inherit; padding: 4px 8px; border: 1px solid var(--line); bo
     ui.thumbs.innerHTML = '';
     ui.empty.hidden = photos.length > 0;
     ui.clear.hidden = photos.length === 0;
+    $('btn-diag').hidden = photos.length === 0 || exampleLoaded;
     ui.anglesRow.hidden = photos.length === 0;
     photos.forEach((p, i) => {
       const d = document.createElement('div'); d.className = 'thumb'; d.dataset.id = p.id;
@@ -2167,6 +2176,32 @@ select.mini { font: inherit; padding: 4px 8px; border: 1px solid var(--line); bo
     } catch (e) { setStatus('Export impossible : ' + e.message, true); }
     dlBusy = false; ui.dl.disabled = !result;
   }
+  // ---------- Export de diagnostic : images + angles + capteurs + réglages ----------
+  async function exportDiag() {
+    if (!photos.length) { toast('Aucune photo à exporter'); return; }
+    const btn = $('btn-diag'); btn.disabled = true;
+    try {
+      const files = [], meta = { app: 'photo-vers-stl', date: new Date().toISOString(), userAgent: navigator.userAgent, screen: [screen.width, screen.height, window.devicePixelRatio], settings: applyMeasures(params()), widthMm: +ui.width.value || null, elevChoice: ui.elev.value, photos: [] };
+      for (let i = 0; i < photos.length; i++) {
+        const p = photos[i];
+        const c = document.createElement('canvas'); c.width = p.w; c.height = p.h; c.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(p.data), p.w, p.h), 0, 0);
+        const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.9));
+        const name = 'img_' + String(i + 1).padStart(2, '0') + '.jpg';
+        files.push({ name, data: new Uint8Array(await blob.arrayBuffer()) });
+        meta.photos.push({ file: name, w: p.w, h: p.h, angle: p.angle, pitchDeg: p.pitchDeg == null ? null : p.pitchDeg, sensor: p.sensor || null, stats: p.stats || null, fromVideo: !!p.fromVideo });
+        if (i % 6 === 5) loadStatus('Préparation de l’export… ' + (i + 1) + ' / ' + photos.length);
+      }
+      if (result) meta.result = { dims: result.dims, pose: result.pose, rejected: result.rejected, triangles: result.triangles };
+      files.push({ name: 'scan.json', data: new TextEncoder().encode(JSON.stringify(meta, null, 1)) });
+      const zip = E.buildZipMulti(files), name = 'diagnostic_scan.zip';
+      const dl = inArtifact ? await window.claude.use('downloads') : null;
+      if (dl) { try { await dl.save({ filename: name, data: new Blob([zip]) }); toast(name + ' enregistré'); } catch (e) { if (!(e && e.code === 'declined')) throw e; } }
+      else saveLink(new Blob([zip], { type: 'application/zip' }), name);
+      loadStatus('Export prêt : envoie le fichier diagnostic_scan.zip dans la conversation.');
+    } catch (e) { loadStatus('Export impossible : ' + (e && e.message ? e.message : e), true); }
+    finally { btn.disabled = false; }
+  }
+
   // ---------- Taille d'impression (figurine, réduction, agrandissement) ----------
   function printFactor() { if (!result) return 1; const h = +$('print-h').value; return h > 0 ? h / result.dims[2] : 1; }
   function updatePrint() {
@@ -2369,6 +2404,7 @@ select.mini { font: inherit; padding: 4px 8px; border: 1px solid var(--line); bo
   // ---------- Événements ----------
   $('btn-example').addEventListener('click', () => loadExample());
   $('btn-scan').addEventListener('click', openScan);
+  $('btn-diag').addEventListener('click', exportDiag);
   $('btn-get-app').addEventListener('click', getApp);
   $('scan-finish').addEventListener('click', () => closeScan(true));
   $('scan-cancel').addEventListener('click', () => closeScan(false));
