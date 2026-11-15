@@ -1362,6 +1362,39 @@ select.mini { font: inherit; padding: 4px 8px; border: 1px solid var(--line); bo
     const sal2 = await mlPredict(resampleRGBA(rgba, w, h, rect, S));
     return { rect, sal: sal2 };
   }
+  // ---------- Contrôle de qualité d'une image (pendant le scan) ----------
+  // Netteté : variance du laplacien de la luminance autour de l'objet.
+  // Signature : histogramme de chromaticité (indépendant de l'éclairage) des pixels de l'objet, 12×12 cases.
+  function qualityFeatures(rgba, w, h, mask) {
+    const st = maskStats(mask, w, h);
+    if (!st.area) return { area: 0, sharp: 0, hist: null, stats: st };
+    const m = 3, x0 = Math.max(1, st.left - m), x1 = Math.min(w - 2, st.right + m), y0 = Math.max(1, st.top - m), y1 = Math.min(h - 2, st.bottom + m);
+    const L = (p) => 0.299 * rgba[p] + 0.587 * rgba[p + 1] + 0.114 * rgba[p + 2];
+    let s1 = 0, s2 = 0, n = 0;
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+      const o = (y * w + x) * 4;
+      const lap = 4 * L(o) - L(o - 4) - L(o + 4) - L(o - 4 * w) - L(o + 4 * w);
+      s1 += lap; s2 += lap * lap; n++;
+    }
+    const sharp = n ? s2 / n - (s1 / n) * (s1 / n) : 0;
+    const B = 12, hist = new Float32Array(B * B); let cnt = 0;
+    for (let p = 0, o = 0; p < w * h; p++, o += 4) {
+      if (!mask[p]) continue;
+      const sum = rgba[o] + rgba[o + 1] + rgba[o + 2] + 1;
+      if (sum < 40) continue;                                  // pixels presque noirs : chromaticité instable
+      const r = rgba[o] / sum, g = rgba[o + 1] / sum;
+      hist[Math.min(B - 1, Math.floor(r * B * 1.5)) * B + Math.min(B - 1, Math.floor(g * B * 1.5))]++; cnt++;
+    }
+    if (cnt) for (let i = 0; i < hist.length; i++) hist[i] /= cnt;
+    return { area: st.area, sharp, hist: cnt ? hist : null, stats: st };
+  }
+  // distance de Bhattacharyya entre deux histogrammes normalisés (0 = identiques, 1 = disjoints)
+  function histDistance(a, b) {
+    if (!a || !b) return 0;
+    let bc = 0; for (let i = 0; i < a.length; i++) bc += Math.sqrt(a[i] * b[i]);
+    return Math.sqrt(Math.max(0, 1 - bc));
+  }
+
   // ---------- Recalage fin des vues sur les silhouettes (angle autour, inclinaison, roulis) ----------
   // Pour chaque vue, on essaie de petites corrections et on garde celle où le volume (sculpté par toutes les vues,
   // avec une tolérance d'une vue) se superpose le mieux à la silhouette. Les capteurs donnent le point de départ.
@@ -1476,6 +1509,24 @@ select.mini { font: inherit; padding: 4px 8px; border: 1px solid var(--line); bo
       return { mask: r.mask, w: im.w, h: im.h, stats: r.stats, bg: r.bg, angle: (im.angleDeg == null) ? (2 * Math.PI * i / images.length) : im.angleDeg * Math.PI / 180, elev: im.elevDeg == null ? null : im.elevDeg * Math.PI / 180, pitch: im.pitchDeg == null ? null : im.pitchDeg * Math.PI / 180, roll: im.rollDeg ? im.rollDeg * Math.PI / 180 : 0, src: i };
     });
     let usable = views.filter(v => v.stats.area > 0);
+    const qualityRejected = [];
+    if (usable.length >= 6 && params.qualityFilter !== false) {
+      // contrôle qualité : silhouette d'une autre couleur (bras, autre objet) ou image très floue
+      const feats = usable.map(v => qualityFeatures(images[v.src].data, v.w, v.h, v.mask));
+      const B = feats[0].hist ? feats[0].hist.length : 0, med = new Float32Array(B);
+      if (B) {
+        for (let b = 0; b < B; b++) { const vals = feats.map(f => f.hist ? f.hist[b] : 0).sort((a, c) => a - c); med[b] = vals[vals.length >> 1]; }
+        let t = 0; for (let b = 0; b < B; b++) t += med[b]; if (t > 0) for (let b = 0; b < B; b++) med[b] /= t;
+      }
+      const sharps = feats.map(f => f.sharp).sort((a, c) => a - c), sMed = sharps[sharps.length >> 1];
+      const keep = [];
+      usable.forEach((v, i) => {
+        // seule une couleur très différente (bras, autre objet) écarte une image ; la netteté varie trop avec les motifs et le contre-jour
+        const d = histDistance(feats[i].hist, med);
+        if (d > 0.7) qualityRejected.push(v.src); else keep.push(v);
+      });
+      if (keep.length >= Math.max(3, usable.length * 0.6)) usable = keep; else qualityRejected.length = 0;
+    }
     if (usable.length < 3) throw new Error('Aucun objet détecté sur assez de photos. Change le mode de détection ou la sensibilité.');
     const res = params.resolution || 128;
     let copts = { handheld: !!params.handheld, direction: params.direction || 1, camera: params.camera, focal: params.focal };
@@ -1549,12 +1600,12 @@ select.mini { font: inherit; padding: 4px 8px; border: 1px solid var(--line); bo
       triangles: fin.indices.length / 3, vertices: fin.positions.length / 3,
       grid: [c.nx, c.ny, c.nz], filledVoxels: filled,
       views: views.map(v => ({ stats: v.stats, bg: v.bg })),
-      pose: pose ? pose.best : null, rejected,
+      pose: pose ? pose.best : null, rejected: qualityRejected.concat(rejected).sort((a, b) => a - b),
     };
   }
   function toFloat(occ) { const f = new Float32Array(occ.length); for (let i = 0; i < occ.length; i++) f[i] = occ[i]; return f; }
 
-  const api = { refinePoses, refineWithColor, orbitPipeline, hollowOpenTop, autoPose, hullScore, trimCaps, coverage, estimateBackground, segment, maskFromSaliency, resampleRGBA, buildCameras, colorize, buildPLY, buildOBJ, buildZipMulti, carve, smoothField, surfaceNets, taubinSmooth, finalizeMesh, meshVolume, vertexNormals, buildSTL, buildZip, crc32, reconstruct };
+  const api = { qualityFeatures, histDistance, refinePoses, refineWithColor, orbitPipeline, hollowOpenTop, autoPose, hullScore, trimCaps, coverage, estimateBackground, segment, maskFromSaliency, resampleRGBA, buildCameras, colorize, buildPLY, buildOBJ, buildZipMulti, carve, smoothField, surfaceNets, taubinSmooth, finalizeMesh, meshVolume, vertexNormals, buildSTL, buildZip, crc32, reconstruct };
 
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = api;
@@ -1584,7 +1635,8 @@ select.mini { font: inherit; padding: 4px 8px; border: 1px solid var(--line); bo
               const sal = await mlPredict(resampleRGBA(im.data, im.w, im.h, [0, 0, im.w, im.h], ML.size));
               mask = maskFromSaliency(sal, ML.size, im.w, im.h, 0.5, [0, 0, im.w, im.h]);
             } else { mask = segment(im.data, im.w, im.h, { mode: 'complex', threshold: 40 }).mask; ok = false; }
-            self.postMessage({ type: 'live', id: msg.id, mask, stats: maskStats(mask, im.w, im.h), ml: ok }, [mask.buffer]);
+            const q = qualityFeatures(im.data, im.w, im.h, mask);
+            self.postMessage({ type: 'live', id: msg.id, mask, stats: q.stats, ml: ok, sharp: q.sharp, hist: q.hist }, [mask.buffer]);
           })().catch(e => self.postMessage({ type: 'error', id: msg.id, message: e && e.message ? e.message : String(e) }));
           return;
         } else if (msg.type === 'segment') {
@@ -1943,7 +1995,7 @@ select.mini { font: inherit; padding: 4px 8px; border: 1px solid var(--line); bo
     try { stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false }); }
     catch (e) { fail((e && e.name) || 'refus'); return; }
     startUserSet();
-    Object.assign(scan, { stream, ori: null, sensors: false, h0: null, filled: RINGS.map(r => new Array(r.n).fill(false)), shots: [], live: null, liveBusy: false, liveT: 0, lastShot: 0, lastHead: null, angVel: 0 });
+    Object.assign(scan, { stream, qref: null, liveHist: [], blockSince: 0, blockKind: null, refused: 0, ori: null, sensors: false, h0: null, filled: RINGS.map(r => new Array(r.n).fill(false)), shots: [], live: null, liveBusy: false, liveT: 0, lastShot: 0, lastHead: null, angVel: 0 });
     window.addEventListener('deviceorientation', onOrientation, true);
     const v = $('scan-video'); v.srcObject = stream; try { await v.play(); } catch (e) {}
     $('scan').hidden = false;
@@ -1959,7 +2011,28 @@ select.mini { font: inherit; padding: 4px 8px; border: 1px solid var(--line); bo
     if (frac > 0.6) return { ok: false, hint: 'Recule : l’objet remplit presque toute l’image.' };
     if (scan.sensors && scan.ori && Math.abs(scan.ori.roll) > 12) return { ok: false, hint: 'Tiens le téléphone droit.' };
     if (scan.sensors && scan.angVel > 70) return { ok: false, hint: 'Plus lentement.' };
-    return { ok: true };
+    // contrôle qualité par rapport aux images déjà acceptées
+    const Q = scan.qref, now = performance.now();
+    // historique récent des détections (pour repérer un changement brusque de taille)
+    const hist = scan.liveHist || (scan.liveHist = []);
+    if (!hist.length || hist[hist.length - 1].t !== L.t) { hist.push({ t: L.t, frac }); while (hist.length && L.t - hist[0].t > 1500) hist.shift(); }
+    let reason = null;
+    if (Q && Q.n >= 3) {
+      const med = (a) => { const b = a.slice().sort((x, y) => x - y); return b[b.length >> 1]; };
+      const past = hist.find(x => L.t - x.t >= 350 && L.t - x.t <= 1200);
+      if (L.hist && E.histDistance(L.hist, Q.hist) > 0.6) reason = { kind: 'color', hint: 'Un autre objet, une main ou un bras est détecté : dégage le champ.' };
+      else if (past && (frac / past.frac < 0.6 || frac / past.frac > 1.65)) reason = { kind: 'jump', hint: 'La silhouette a changé brusquement : quelque chose passe devant l\u2019objet ?' };
+      else if (L.sharp < 0.33 * med(Q.sharps)) reason = { kind: 'blur', hint: 'Image floue : bouge plus lentement ou éclaire davantage.' };
+    }
+    if (reason) {
+      // anti-blocage : si la situation dure (nouvel éclairage, nouvelle distance), on l'accepte
+      if (!scan.blockSince || scan.blockKind !== reason.kind) { scan.blockSince = now; scan.blockKind = reason.kind; }
+      const limit = reason.kind === 'color' ? 5000 : 3000;
+      if (now - scan.blockSince < limit) return { ok: false, hint: reason.hint, bad: true };
+      if (Q) { Q.sharps = [L.sharp]; if (L.hist) Q.hist = Float32Array.from(L.hist); }
+    }
+    scan.blockSince = 0; scan.blockKind = null;
+    return { ok: true, frac };
   }
   function scanShot(azimuth, elev) {
     const v = $('scan-video'); if (!v.videoWidth) return;
@@ -1969,6 +2042,14 @@ select.mini { font: inherit; padding: 4px 8px; border: 1px solid var(--line); bo
     ph.angle = Math.round(azimuth); ph.angleEdited = true; if (elev != null) ph.pitchDeg = Math.round(elev * 10) / 10;
     if (scan.ori) ph.sensor = { alpha: scan.ori.alpha, beta: scan.ori.beta, gamma: scan.ori.gamma, head: scan.ori.head, roll: scan.ori.roll, azimuth: azimuth, absolute: scan.ori.abs, t: Date.now() };
     photos.push(ph); scan.shots.push(ph); scan.lastShot = performance.now();
+    // mémorise la signature de l'objet accepté (couleurs, taille, netteté)
+    const L = scan.live;
+    if (L && L.hist) {
+      const Q = scan.qref || (scan.qref = { hist: Float32Array.from(L.hist), areas: [], sharps: [], n: 0 });
+      if (Q.n > 0) for (let i = 0; i < Q.hist.length; i++) Q.hist[i] = 0.8 * Q.hist[i] + 0.2 * L.hist[i];
+      Q.areas.push(L.stats.area / (L.w * L.h)); Q.sharps.push(L.sharp); Q.n++;
+      if (Q.areas.length > 8) { Q.areas.shift(); Q.sharps.shift(); }
+    }
     scan.flash = performance.now();
     try { if (navigator.vibrate) navigator.vibrate(25); } catch (e) {}
   }
@@ -1990,7 +2071,7 @@ select.mini { font: inherit; padding: 4px 8px; border: 1px solid var(--line); bo
       scan.small.width = lw; scan.small.height = lh; const sg = scan.small.getContext('2d'); sg.drawImage(v, 0, 0, lw, lh);
       const data = sg.getImageData(0, 0, lw, lh).data;
       scan.liveBusy = true; scan.liveT = now;
-      call({ type: 'live', image: { data, w: lw, h: lh } }).then(r => { scan.live = { mask: r.mask, stats: r.stats, w: lw, h: lh, t: performance.now(), ml: r.ml }; })
+      call({ type: 'live', image: { data, w: lw, h: lh } }).then(r => { scan.live = { mask: r.mask, stats: r.stats, w: lw, h: lh, t: performance.now(), ml: r.ml, sharp: r.sharp, hist: r.hist }; })
         .catch(() => {}).finally(() => { scan.liveBusy = false; });
     }
     // secteur courant
@@ -2004,7 +2085,7 @@ select.mini { font: inherit; padding: 4px 8px; border: 1px solid var(--line); bo
     if (L && now - L.t < 1600) {
       if (!scan.maskCv) scan.maskCv = document.createElement('canvas');
       const mc = scan.maskCv; mc.width = L.w; mc.height = L.h; const mg = mc.getContext('2d'); const id = mg.createImageData(L.w, L.h);
-      const col = already ? [46, 190, 110] : [245, 150, 40];
+      const q0 = scan.lastQ, col = (q0 && q0.bad) ? [235, 70, 60] : already ? [46, 190, 110] : [245, 150, 40];
       const lw = L.w;
       for (let i = 0, o = 0; i < L.mask.length; i++, o += 4) if (L.mask[i]) {
         const x = i % lw, edge = !L.mask[i - 1] || !L.mask[i + 1] || !L.mask[i - lw] || !L.mask[i + lw] || x === 0 || x === lw - 1;
@@ -2014,7 +2095,7 @@ select.mini { font: inherit; padding: 4px 8px; border: 1px solid var(--line); bo
     }
     if (scan.flash && now - scan.flash < 120) { g.fillStyle = 'rgba(255,255,255,0.35)'; g.fillRect(0, 0, W, H); }
     // capture automatique
-    const q = scanQuality();
+    const q = scanQuality(); scan.lastQ = q;
     if (q.ok) {
       if (scan.sensors) {
         if (scan.h0 == null) { scan.h0 = scan.ori.head; }
@@ -2231,7 +2312,7 @@ select.mini { font: inherit; padding: 4px 8px; border: 1px solid var(--line); bo
       $('st-size').textContent = fmtBytes(84 + 50 * result.triangles);
       const rej = (result.rejected || []).map(i => i + 1);
       const pz = result.pose; const poseTxt = pz ? ' Angle de vue ' + (pz.sensor ? 'mesuré par le téléphone (moyenne)' : pz.solved ? 'calculé' : 'supposé') + ' : ' + pz.elev + '°.' + (!pz.solved && ui.elev.value === 'auto' ? ' Indique aussi la largeur réelle pour que l\u2019application le calcule.' : '') + (pz.sensor && !(+ui.width.value > 0) ? ' Pour des proportions exactes, indique aussi la largeur réelle.' : '') : '';
-      setBar(1); setStatus('Pièce reconstruite en ' + ((performance.now() - t0) / 1000).toFixed(1) + ' s à partir de ' + (photos.length - rej.length) + ' vues (' + detectLabels[ui.detect.value] + ').' + poseTxt + (rej.length ? ' Image' + (rej.length > 1 ? 's' : '') + ' écartée' + (rej.length > 1 ? 's' : '') + ' car incohérente' + (rej.length > 1 ? 's' : '') + ' avec les autres : ' + rej.join(', ') + '.' : ''));
+      setBar(1); setStatus('Pièce reconstruite en ' + ((performance.now() - t0) / 1000).toFixed(1) + ' s à partir de ' + (photos.length - rej.length) + ' vues (' + detectLabels[ui.detect.value] + ').' + poseTxt + (rej.length ? ' Image' + (rej.length > 1 ? 's' : '') + ' écartée' + (rej.length > 1 ? 's' : '') + ' (autre objet détecté ou incohérente avec les autres) : ' + rej.join(', ') + '.' : ''));
       ui.dl.disabled = false; ui.btnColor.disabled = !result.colors;
       $('print-box').hidden = false; $('print-h').value = result.dims[2].toFixed(1); updatePrint();
     } catch (e) { setStatus(e.message, true); setBar(0); }
